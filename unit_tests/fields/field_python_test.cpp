@@ -1,229 +1,164 @@
 /*
- * python_function_test.cpp
+ * field_python_test.cpp
  *
  *  Created on: Aug 30, 2012
  *      Author: jb
  */
 
 
-
+#define TEST_USE_MPI
 #define FEAL_OVERRIDE_ASSERTS
+#include <flow_gtest_mpi.hh>
+#include <mesh_constructor.hh>
+#include "arma_expect.hh"
 
-#include <flow_gtest.hh>
-#include <string>
-#include <cmath>
-
-
-
-#include "system/global_defs.h"
-
-
-#ifdef FLOW123D_HAVE_PYTHON
-
-#include "system/python_loader.hh"
-#include "fields/field_python.hh"
+#include "field_eval_base.hh"              // for FieldEvalBaseTest
+#include "fields/eval_points.hh"
+#include "fields/eval_subset.hh"
+#include "fields/field_value_cache.hh"
+#include "fields/field_values.hh"
+#include "fields/field_set.hh"
 #include "tools/unit_si.hh"
+#include "fields/bc_field.hh"
+#include "quadrature/quadrature.hh"
+#include "quadrature/quadrature_lib.hh"
+#include "fem/dofhandler.hh"
+#include "fem/dh_cell_accessor.hh"
+#include "mesh/mesh.h"
+#include "mesh/accessors.hh"
 #include "input/input_type.hh"
 #include "input/accessors.hh"
 #include "input/reader_to_storage.hh"
-
-using namespace std;
-
-
-string python_code = R"CODE(
-def testFunc():
-    print ("Python hallo.")
-
-class testClass:
-    def testMethod(self):
-        print ("eggs!")
-)CODE";
-
-string python_function = R"CODE(
-import math
-
-def func_xyz(x,y,z):
-    return ( x*y*z , )     # one value tuple
-
-def func_circle(r,phi,n):
-    return ( r * math.cos(phi), r * math.sin(phi), 1 )
-)CODE";
-
-string python_call_object_err = R"CODE(
-import math
-
-def func_xyz(x,y,z,a):
-    return ( x*y*z+a , )     # one value tuple
-)CODE";
+#include "system/sys_profiler.hh"
+#include "system/python_loader.hh"
 
 
-string input = R"INPUT(
-{   
-   field_string={
-       TYPE="FieldPython",
-       function="func_circle",
-       script_string="import math\ndef func_circle(r,phi,n): return ( r * math.cos(phi), r * math.sin(phi), 1 )"
-   },
-   field_string_unit_conversion={
-       TYPE="FieldPython",
-       function="func_circle",
-       script_string="import math\ndef func_circle(r,phi,n): return ( r * math.cos(phi), r * math.sin(phi), 1 )",
-       unit="cm"
-   },
-   field_file={
-       TYPE="FieldPython",
-       function="func_xyz",
-       script_file="fields/field_python_script.py"
-   }
-}
-)INPUT";
+class FieldEvalPythonTest : public FieldEvalBaseTest {
+public:
+
+    class EqData : public FieldEvalBaseTest::EqData {
+        EqData() : FieldEvalBaseTest::EqData() {}
+    };
+
+    FieldEvalPythonTest() : FieldEvalBaseTest() {}
+
+    ~FieldEvalPythonTest() {}
+};
 
 
-TEST(PythonLoader, all) {
-    PyObject * module = PythonLoader::load_module_from_string("my_module", python_code);
-    PyObject * p_func = PyObject_GetAttrString(module, "testFunc" );
-    PyObject * p_args = PyTuple_New( 0 );
-    PyObject_CallObject(p_func, p_args); // this should print out 'Python hallo.'
-}
+TEST_F(FieldEvalPythonTest, evaluate) {
+    string eq_data_input = R"YAML(
+    data:
+      - region: 3D left
+        time: 0.0
+        scalar_field: !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest1
+          used_fields: ['X']
+        vector_field: !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest1
+          used_fields: ['X']
+        tensor_field: !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest1
+          used_fields: ['X']
+        scalar_ref: !FieldFormula
+          value: X[0]
+        vector_ref: !FieldFormula
+          value: "[X[0], 2*X[0], 0.5]"
+        tensor_ref: !FieldFormula
+          value: "[ [X[0], 0.2, 0.3], [0.2, 0.4, 0.5], [0.3, 0.5, 0.6] ]"
+      - region: 3D right
+        time: 0.0
+        scalar_field: !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest2
+          used_fields: ['X']
+        vector_field:  !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest2
+          used_fields: ['X']
+        tensor_field: !FieldPython
+          source_file: ./fields/field_python_test.py
+          class: FieldPythonTest2
+          used_fields: ['X']
+        scalar_ref: !FieldFormula
+          value: X[1]
+        vector_ref: !FieldFormula
+          value: "[X[1], 2*X[1], 0.5]"
+        tensor_ref: !FieldFormula
+          value: "[ [X[1], 2.2, 2.3], [2.2, 2.4, 2.5], [2.3, 2.5, 2.6] ]"
+    )YAML";
 
-TEST(FieldPython, vector_3D) {
+    this->create_mesh("mesh/cube_2x1.msh");
+    this->read_input(eq_data_input);
 
-    double pi = 4.0 * atan(1);
+    eq_data_->reallocate_cache();
 
-    Space<3>::Point point_1, point_2;
-    point_1(0)=1.0; point_1(1)= pi / 2.0; point_1(2)=1.0;
-    point_2(0)= sqrt(2.0); point_2(1)= 3.0 * pi / 4.0; point_2(2)= pi / 2.0;
-
-    FieldPython<3, FieldValue<3>::VectorFixed > vec_func;
-    vec_func.set_python_field_from_string(python_function, "func_circle");
-    ElementAccessor<3> elm;
-
-    arma::vec3 result;
-    {
-    result = vec_func.value( point_1, elm);
-    EXPECT_DOUBLE_EQ( cos(pi /2.0 ) , result[0]); // should be 0.0
-    EXPECT_DOUBLE_EQ( 1, result[1]);
-    EXPECT_DOUBLE_EQ( 1, result[2]);
-    }
-
-    {
-    result = vec_func.value( point_2, elm);
-    EXPECT_DOUBLE_EQ( -1, result[0]);
-    EXPECT_DOUBLE_EQ( 1, result[1]);
-    EXPECT_DOUBLE_EQ( 1, result[2]);
-    }
-}
-
-
-TEST(FieldPython, double_3D) {
-    Space<3>::Point point_1, point_2;
-    point_1(0)=1; point_1(1)=0; point_1(2)=0;
-    point_2(0)=1; point_2(1)=2; point_2(2)=3;
-
-    ElementAccessor<3> elm;
-    FieldPython<3, FieldValue<3>::Scalar> scalar_func;
-    scalar_func.set_python_field_from_string(python_function, "func_xyz");
-
-    EXPECT_EQ( 0, scalar_func.value(point_1, elm));
-    EXPECT_EQ( 6, scalar_func.value(point_2, elm));
-
+    FieldRef<ScalarField> ref_scalar(eq_data_->scalar_ref);
+    FieldRef<VectorField> ref_vector(eq_data_->vector_ref);
+    FieldRef<TensorField> ref_tensor(eq_data_->tensor_ref);
+    EXPECT_TRUE( eval_bulk_field(eq_data_->scalar_field, ref_scalar) );
+    EXPECT_TRUE( eval_bulk_field(eq_data_->vector_field, ref_vector) );
+    EXPECT_TRUE( eval_bulk_field(eq_data_->tensor_field, ref_tensor) );
 
 }
 
 
-TEST(FieldPython, read_from_input) {
-    typedef FieldAlgorithmBase<3, FieldValue<3>::VectorFixed > VectorField;
-    typedef FieldAlgorithmBase<3, FieldValue<3>::Scalar > ScalarField;
-    double pi = 4.0 * atan(1);
+TEST_F(FieldEvalPythonTest, exc_nonexist_file) {
+    string eq_data_input = R"YAML(
+    data:
+      - region: BULK
+        time: 0.0
+        scalar_field: !FieldPython
+          source_file: fields/field_python_asm.py
+          class: SomeClass
+          used_fields: ['X']
+    )YAML";
 
-    // setup FilePath directories
-    FilePath::set_io_dirs(".",UNIT_TESTS_SRC_DIR,"",".");
-
-    Input::Type::Record rec_type = Input::Type::Record("FieldPythonTest","")
-        .declare_key("field_string", VectorField::get_input_type_instance(), Input::Type::Default::obligatory(),"" )
-        .declare_key("field_string_unit_conversion", VectorField::get_input_type_instance(), Input::Type::Default::obligatory(),"" )
-        .declare_key("field_file", ScalarField::get_input_type_instance(), Input::Type::Default::obligatory(), "" )
-        .close();
-
-    // read input string
-    Input::ReaderToStorage reader( input, rec_type, Input::FileFormat::format_JSON );
-    Input::Record in_rec=reader.get_root_interface<Input::Record>();
-    UnitSI unit = UnitSI().m();
-    FieldAlgoBaseInitData init_data("field_python", 3, unit);
-
-    auto flux=VectorField::function_factory(in_rec.val<Input::AbstractRecord>("field_string"), init_data);
-    {
-        Space<3>::Point point_1, point_2;
-        point_1(0)=1.0; point_1(1)= pi / 2.0; point_1(2)=1.0;
-        point_2(0)= sqrt(2.0); point_2(1)= 3.0 * pi / 4.0; point_2(2)= pi / 2.0;
-
-        ElementAccessor<3> elm;
-        arma::vec3 result;
-
-        result = flux->value( point_1, elm);
-        EXPECT_DOUBLE_EQ( cos(pi /2.0 ) , result[0]); // should be 0.0
-        EXPECT_DOUBLE_EQ( 1, result[1]);
-        EXPECT_DOUBLE_EQ( 1, result[2]);
-
-        result = flux->value( point_2, elm);
-        EXPECT_DOUBLE_EQ( -1, result[0]);
-        EXPECT_DOUBLE_EQ( 1, result[1]);
-        EXPECT_DOUBLE_EQ( 1, result[2]);
-    }
-
-    auto flux_unit_conv=VectorField::function_factory(in_rec.val<Input::AbstractRecord>("field_string_unit_conversion"), init_data);
-    {
-        Space<3>::Point point_1, point_2;
-        point_1(0)=1.0; point_1(1)= pi / 2.0; point_1(2)=1.0;
-        point_2(0)= sqrt(2.0); point_2(1)= 3.0 * pi / 4.0; point_2(2)= pi / 2.0;
-
-        ElementAccessor<3> elm;
-        arma::vec3 result;
-
-        result = flux_unit_conv->value( point_1, elm);
-        EXPECT_DOUBLE_EQ( 0.01*cos(pi /2.0 ) , result[0]); // should be 0.0
-        EXPECT_DOUBLE_EQ( 0.01, result[1]);
-        EXPECT_DOUBLE_EQ( 0.01, result[2]);
-
-        result = flux_unit_conv->value( point_2, elm);
-        EXPECT_DOUBLE_EQ( -0.01, result[0]);
-        EXPECT_DOUBLE_EQ( 0.01, result[1]);
-        EXPECT_DOUBLE_EQ( 0.01, result[2]);
-    }
-
-    auto conc=ScalarField::function_factory(in_rec.val<Input::AbstractRecord>("field_file"), init_data);
-    {
-        Space<3>::Point point_1, point_2;
-        point_1(0)=1; point_1(1)=0; point_1(2)=0;
-        point_2(0)=1; point_2(1)=2; point_2(2)=3;
-        ElementAccessor<3> elm;
-
-        EXPECT_EQ( 0, conc->value(point_1, elm));
-        EXPECT_EQ( 6, conc->value(point_2, elm));
-    }
-
-
-}
-
-TEST(FieldPython, python_exception) {
-    FieldPython<3, FieldValue<3>::Scalar> scalar_func;
-	EXPECT_THROW_WHAT( { scalar_func.set_python_field_from_string(python_function, "func_xxx"); }, PythonLoader::ExcPythonError,
-        "Message: module 'python_field_func_xxx' has no attribute 'func_xxx'");
-
+    this->create_mesh("mesh/cube_2x1.msh");
+    this->read_input(eq_data_input);
+    EXPECT_THROW_WHAT( { eq_data_->reallocate_cache(); }, FilePath::ExcFileOpen,
+        "Can not open file:");
 }
 
 
-TEST(FieldPython, call_object_error) {
-    FieldPython<3, FieldValue<3>::Scalar> scalar_func;
-	EXPECT_THROW( { scalar_func.set_python_field_from_string(python_call_object_err, "func_xyz"); }, PythonLoader::ExcPythonError);
-        //"Program Error: Python Error: func_xyz() takes exactly 4 arguments (3 given)"
+TEST_F(FieldEvalPythonTest, exc_nonexist_class) {
+    string eq_data_input = R"YAML(
+    data:
+      - region: BULK
+        time: 0.0
+        scalar_field: !FieldPython
+          source_file: fields/field_python_test.py
+          class: NonExistClass
+          used_fields: ['X']
+    )YAML";
 
+    this->create_mesh("mesh/cube_2x1.msh");
+    this->read_input(eq_data_input);
+    EXPECT_THROW_WHAT( { eq_data_->reallocate_cache(); }, PythonLoader::ExcPythonError,
+        "has no attribute 'NonExistClass'");
 }
 
 
-#else
-TEST(FieldPython, python_not_supported) {
+TEST_F(FieldEvalPythonTest, exc_nonexist_function) {
+    string eq_data_input = R"YAML(
+    data:
+      - region: BULK
+        time: 0.0
+        scalar_field: !FieldPython
+          source_file: fields/field_python_test.py
+          class: FieldPythonTest3
+          used_fields: ['X']
+    )YAML";
 
+    this->create_mesh("mesh/cube_2x1.msh");
+    this->read_input(eq_data_input);
+    eq_data_->reallocate_cache();
+
+    SingleValRef<double> ref_scalar(0.0);
+    EXPECT_THROW_WHAT( { eval_bulk_field(eq_data_->scalar_field, ref_scalar); }, PythonLoader::ExcPythonError,
+        "'NoneType' object is not subscriptable");
 }
-#endif // FLOW123D_HAVE_PYTHON
 

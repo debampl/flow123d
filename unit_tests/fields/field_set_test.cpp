@@ -24,9 +24,6 @@
 #include "input/reader_to_storage.hh"
 
 
-FLOW123D_FORCE_LINK_IN_PARENT(field_constant)
-FLOW123D_FORCE_LINK_IN_PARENT(field_formula)
-
 
 enum {
 	r_first,
@@ -48,7 +45,7 @@ const string eq_data_input = R"JSON(
         region="BULK",
         init_pressure=1.1,
         velocity={TYPE="FieldFormula",
-            value=[ "x", "y" , "z"]
+            value="[ x, y, z]"
         },
         reaction_type="r_first"
       },
@@ -76,12 +73,14 @@ public:
 						.disable_where(type, {r_first, r_second })
 						.name("init_pressure")
 						.description("Pressure head")
+						.input_default("0.0")
 						.units( UnitSI().m() );
 
 			*this += type
 						.name("reaction_type")
 						.description("")
 						.units( UnitSI::dimensionless() )
+						.input_default("\"r_first\"")
 						.flags_add(in_main_matrix)
 						.input_selection(reaction_type_sel);
 		}
@@ -100,6 +99,7 @@ public:
 
 	~SomeEquation() {
 		delete mesh_;
+        Profiler::uninitialize();
 	}
 
 	Mesh * mesh_;
@@ -113,7 +113,7 @@ TEST_F(SomeEquation, add_operator_death) {
     EXPECT_ASSERT_DEATH({
         data+=pressure
              .name("init_pressure");},
-          "Another field of the same name exists");
+          "field of the same name");
 
 }
 
@@ -269,7 +269,7 @@ TEST_F(SomeEquation, input_related) {
 
     // time = 0.5
     data.set_time(tg.step(), LimitSide::right);
-    EXPECT_FALSE(data.changed());
+    EXPECT_TRUE(data.changed());
     EXPECT_FALSE(data.is_constant(front_3d));
     EXPECT_FALSE(tg.is_current(tg.marks().type_input()));
     tg.next_time();
@@ -384,9 +384,6 @@ public:
                     for (unsigned int i=1; i<r.second.size(); ++i)
                         // fields are sorted by name
                         EXPECT_TRUE(r.second[i-1]->name() < r.second[i]->name());
-                else // boundary regions are in original order
-                	for (unsigned int i=0; i<r.second.size(); ++i)
-                	    EXPECT_EQ(r.second[i]->name(), orig_order[i]);
             }
         }
 
@@ -409,6 +406,7 @@ public:
 
     ~TestDependency() {
         delete mesh_;
+        Profiler::uninitialize();
     }
 
     void read_input(const string &input) {

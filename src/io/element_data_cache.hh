@@ -49,8 +49,7 @@ class ElementDataCache : public ElementDataCacheBase {
  * Read of values from tokenizer and output of values to stream is implemented as it depends on the value type T.
  */
 public:
-	typedef std::shared_ptr< std::vector<T> > ComponentDataPtr;
-	typedef std::vector< ComponentDataPtr > CacheData;
+	typedef std::shared_ptr< std::vector<T> > CacheData;
 
 	/// Default constructor
 	ElementDataCache();
@@ -62,10 +61,9 @@ public:
 	 *
      * @param field_name    Field name thas is read
      * @param time          Actual time of data
-	 * @param size_of_cache Count of columns of data cache
 	 * @param row_vec_size  Count of rows of data cache
 	 */
-	ElementDataCache(std::string field_name, double time, unsigned int size_of_cache, unsigned int row_vec_size);
+	ElementDataCache(std::string field_name, double time, unsigned int row_vec_size, unsigned int boundary_begin);
 
     /**
      * \brief Constructor of output ElementDataCache (allow write data)
@@ -85,13 +83,13 @@ public:
      */
     virtual ~ElementDataCache() override;
 
-    /// Return vector of element data for get component.
-	ComponentDataPtr get_component_data(unsigned int component_idx);
+    /// Return underlying vector of element data.
+	CacheData get_data();
 
 	/**
-	 * Create data cache with given count of columns (\p size_of_cache) and rows (\p row_vec_size).
+	 * Create data cache with given count rows (\p row_vec_size).
 	 */
-	static CacheData create_data_cache(unsigned int size_of_cache, unsigned int row_vec_size);
+	static CacheData create_data_cache(unsigned int row_vec_size);
 
 	/// Implements @p ElementDataCacheBase::read_ascii_data.
 	void read_ascii_data(Tokenizer &tok, unsigned int n_components, unsigned int i_row) override;
@@ -148,26 +146,6 @@ public:
      */
     void get_min_max_range(double &min, double &max) override;
 
-    /**
-     * Make full check of data stored in cache.
-     *
-     * Method iterates through data and
-     *  - checks NaN data values, default_val replaces NaN
-     *  - if default_val==NaN and some value(s) is not replaced with valid value return CheckResult::nan
-     *  - if some value(s) is out of limits )lower_bound, upper_bound) return CheckResult::out_of_limits
-     *  - in other cases return CheckResult::ok
-     *
-     * Method is executed only once.
-     */
-    CheckResult check_values(double default_val, double lower_bound, double upper_bound);
-
-    /**
-     * Scale data vector of given 'component_idx' with scale 'coef'.
-     *
-     * Method is executed only once and should be called after check_values method.
-     * Method can be used e. g. for convert between units.
-     */
-    void scale_data(double coef);
 
     /// Implements ElementDataCacheBase::gather.
     std::shared_ptr< ElementDataCacheBase > gather(Distribution *distr, LongIdx *local_to_global) override;

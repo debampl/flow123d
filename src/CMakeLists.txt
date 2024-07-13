@@ -72,6 +72,7 @@ endif()
 # patched json_spirit lib
 add_subdirectory("input/json_spirit")
 
+
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 #message(STATUS "Include directories: ${flow123d_includes}")
 #include_directories(${flow123d_includes})
@@ -89,7 +90,7 @@ endif()
 #endif()
 
 # system_lib
-add_library(system_lib 
+add_library(system_lib SHARED
     system/python_loader.cc
     system/math_fce.cc
     system/sys_profiler.cc
@@ -100,7 +101,6 @@ add_library(system_lib
     system/asserts.cc
     system/file_path.cc
     system/tokenizer.cc
-    system/application_base.cc
     system/logger.cc
     system/logger_options.cc
     system/armadillo_tools.cc
@@ -108,13 +108,21 @@ add_library(system_lib
     system/fmt/ostream.cc
     system/fmt/posix.cc
 )
-target_link_libraries(system_lib 
+target_link_libraries(system_lib PUBLIC 
+	MPI::MPI_CXX
+    pybind11::embed 
     ${PERMON_LIBRARY}
     ${PETSC_LIBRARIES}  
     ${PETSC_EXTERNAL_LIB} 
     ${Boost_LIBRARIES} 
     ${PYTHON_LIBRARIES}
     nlohmann_json::nlohmann_json)
+set_target_properties(system_lib 
+    PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
+               BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../src"
+               INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN/../src" 
+#    LINK_FLAGS "-Wl,--whole-archive ${YamlCpp_LIBRARY} -Wl,--no-whole-archive"
+)    
 add_dependencies(system_lib update_source_tree)
 
 
@@ -144,6 +152,7 @@ add_library(input_lib
 target_link_libraries(input_lib 
     system_lib json_spirit
     ${YamlCpp_LIBRARY})
+#    -Wl,--whole-archive ${YamlCpp_LIBRARY} -Wl,--no-whole-archive)
 
 
 # la_lib
@@ -161,7 +170,7 @@ add_library(la_lib
     la/vector_mpi.cc
 )
 target_link_libraries(la_lib 
-    input_lib system_lib
+    input_lib
     armadillo 
     ${PERMON_LIBRARY}
     ${PETSC_LIBRARIES}  
@@ -170,7 +179,6 @@ target_link_libraries(la_lib
     ${Boost_LIBRARIES})
 set_target_properties(la_lib 
     PROPERTIES  COMPILE_FLAGS "${BDDCML_CDEFS}" ) 
-
 
 
 # tools_lib    
@@ -183,8 +191,8 @@ add_library(tools_lib
     tools/unit_converter.cc
 )
 target_link_libraries(tools_lib
-    system_lib input_lib )
-
+    input_lib )
+  
 
 
 # mesh_lib
@@ -228,7 +236,7 @@ add_library(mesh_lib
 )
 
 target_link_libraries(mesh_lib
-    input_lib system_lib la_lib
+    input_lib la_lib
     armadillo 
     ${Boost_LIBRARIES}
     ${PugiXml_LIBRARY}
@@ -251,7 +259,7 @@ add_library(fem_lib
     fem/mapping_p1.cc
 )
 target_link_libraries(fem_lib
-    system_lib mesh_lib 
+    mesh_lib 
     armadillo 
     ${Boost_LIBRARIES})
 
@@ -275,13 +283,18 @@ add_library(io_lib
 )
 
 target_link_libraries(io_lib
-    system_lib input_lib mesh_lib fem_lib la_lib
+    input_lib mesh_lib fem_lib la_lib
     armadillo 
     ${Boost_LIBRARIES}
     ${PugiXml_LIBRARY}
     ${Zlib_LIBRARY})
 
 
+# Have to add as SHARED as the target is used both as the Python module as the C++ SO library linked by Flow123d.
+pybind11_add_module("fieldproxypy" SHARED "fields/python_field_proxy.cc")
+#pybind11_add_module("fieldproxypy" MODULE "${CMAKE_SOURCE_DIR}/src/fields/python_field_proxy.cc")
+#add_executable(flow123dpy fields/python_field_proxy.cc)
+target_link_libraries(fieldproxypy system_lib armadillo) 
 
 
 
@@ -305,9 +318,7 @@ add_library(coupling_lib
     fields/field_formula.cc
     fields/table_function.cc
     fields/field_time_function.cc
-    fields/field_divide.cc
     fields/field_fe.cc
-    fields/fe_value_handler.cc
     fields/eval_subset.cc
     fields/eval_points.cc
     fields/field_value_cache.cc
@@ -317,24 +328,25 @@ add_library(coupling_lib
     # coupling/hc_explicit_sequential.cc
 )
 target_link_libraries(coupling_lib
-    system_lib input_lib mesh_lib tools_lib fem_lib io_lib
-    fparser   
+    input_lib mesh_lib tools_lib fem_lib io_lib
+    fieldproxypy
     bparser  
     armadillo
-    ${Boost_LIBRARIES})
+    ${Boost_LIBRARIES}
+    ${PYTHON_LIBRARIES})
 
 
 
 set(sources_lib_non_system
 )
 # all remaining sources 
-add_library(flow123d_lib 
+add_library(flow123d_lib SHARED 
     flow/darcy_flow_mh_output.cc
-    flow/darcy_flow_mh.cc
+    # flow/darcy_flow_mh.cc
     flow/darcy_flow_lmh.cc
     flow/soil_models.cc
     flow/richards_lmh.cc
-    flow/mortar_assembly.cc
+    # flow/mortar_assembly.cc
 
     reaction/reaction_term.cc
     reaction/first_order_reaction.cc
@@ -358,12 +370,14 @@ add_library(flow123d_lib
 
     coupling/hc_explicit_sequential.cc
     coupling/hm_iterative.cc
+    coupling/application.cc
+
 )    
     
 target_link_libraries(flow123d_lib 
     fem_lib mesh_lib la_lib input_lib io_lib
-    system_lib tools_lib coupling_lib
-    fparser  
+    tools_lib coupling_lib
+    system_lib 
     bparser
     armadillo 
 #    ${TBB_LIBRARIES}
@@ -376,6 +390,11 @@ target_link_libraries(flow123d_lib
 )
 set_target_properties(flow123d_lib 
     PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
+               BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../src"
+               INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN/../src" 
+#    LINK_FLAGS "-Wl,--whole-archive ${YamlCpp_LIBRARY} -Wl,--no-whole-archive"
 )
+add_dependencies(flow123d_lib rev_num_always)    
+
 #add_dependencies(flow123d_lib tbb)
 

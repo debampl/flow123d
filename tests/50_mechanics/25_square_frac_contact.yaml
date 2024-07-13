@@ -4,7 +4,7 @@
 #   - the domain is a square, chopped to its half
 #   - for testing contact conditions
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: 2D elastic model with a single fracture with different BC.
   mesh:
@@ -27,7 +27,7 @@ problem: !Coupling_Sequential
     a_tol: 0
     r_tol: 1e-9
 
-    flow_equation: !Flow_Richards_LMH
+    flow_equation: !Flow_Darcy_LMH
         input_fields:
           - region: BULK
             conductivity: 1
@@ -55,7 +55,7 @@ problem: !Coupling_Sequential
             - cross_section_updated
             - region_id
         solver: !Petsc
-          options: -ksp_type preonly -pc_type lu
+        contact: true
         input_fields:
           - region: bulk
             young_modulus: 1

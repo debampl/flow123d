@@ -47,7 +47,7 @@ template <int spacedim, class Value>
 FieldAlgorithmBase<spacedim, Value>::FieldAlgorithmBase(unsigned int n_comp)
 : value_(r_value_),
   field_result_(result_other),
-  component_idx_(std::numeric_limits<unsigned int>::max()),
+  component_idx_(undef_idx),
   unit_conversion_coefficient_(1.0)
 {
     value_.set_n_comp(n_comp);
@@ -57,19 +57,19 @@ FieldAlgorithmBase<spacedim, Value>::FieldAlgorithmBase(unsigned int n_comp)
 
 template <int spacedim, class Value>
 string FieldAlgorithmBase<spacedim, Value>::template_name() {
-	return fmt::format("R{:d}_to_{}", spacedim, Value::type_name() );
+	return ""; //fmt::format("R{:d}_to_{}", spacedim, Value::type_name() ); // maybe change template name
 }
 
 
 
 template <int spacedim, class Value>
 Input::Type::Abstract & FieldAlgorithmBase<spacedim, Value>::get_input_type() {
-	stringstream ss;
-	ss << "[" << Value::NRows_  << ", " << Value::NCols_  << "]";
+	//stringstream ss;
+	//ss << "[" << Value::NRows_  << ", " << Value::NCols_  << "]";
     return it::Abstract("Field_"+template_name(), "Abstract for all time-space functions.")
 			.allow_auto_conversion("FieldConstant")
 			.root_of_generic_subtree()
-			.add_attribute(FlowAttribute::field_value_shape(), ss.str() )
+			//.add_attribute(FlowAttribute::field_value_shape(), ss.str() )
 			.close();
 }
 
@@ -78,7 +78,7 @@ template <int spacedim, class Value>
 const Input::Type::Instance & FieldAlgorithmBase<spacedim, Value>::get_input_type_instance(Input::Type::Selection value_selection) {
 	std::vector<it::TypeBase::ParameterPair> param_vec;
 	if (is_enum_valued) {
-		ASSERT( !(value_selection==Input::Type::Selection()) ).error("Not defined 'value_selection' for enum element type.\n");
+		ASSERT_PERMANENT( !(value_selection==Input::Type::Selection()) ).error("Not defined 'value_selection' for enum element type.\n");
 		param_vec.push_back( std::make_pair("element_input_type", std::make_shared<it::Selection>(value_selection)) );
 	} else {
 		param_vec.push_back( std::make_pair("element_input_type", std::make_shared<typename Value::ElementInputType>()) );
@@ -124,7 +124,7 @@ bool FieldAlgorithmBase<spacedim, Value>::set_time(const TimeStep &time) {
 
 
 template <int spacedim, class Value>
-void FieldAlgorithmBase<spacedim, Value>::set_mesh(const Mesh *,  bool) {
+void FieldAlgorithmBase<spacedim, Value>::set_mesh(const Mesh *) {
 }
 
 
@@ -141,7 +141,7 @@ void FieldAlgorithmBase<spacedim, Value>::cache_update(
 			FMT_UNUSED ElementCacheMap &cache_map,
 			FMT_UNUSED unsigned int region_patch_idx)
 {
-    ASSERT_DBG(false).error("Must be implemented in descendants!\n");
+    ASSERT_PERMANENT(false).error("Must be implemented in descendants!\n");
 }
 
 
@@ -149,22 +149,6 @@ template<int spacedim, class Value>
 void FieldAlgorithmBase<spacedim, Value>::cache_reinit(FMT_UNUSED const ElementCacheMap &cache_map)
 {}
 
-
-template<int spacedim, class Value>
-void FieldAlgorithmBase<spacedim, Value>::value_list(
-        const Armor::array  &point_list,
-        const ElementAccessor<spacedim> &elm,
-        std::vector<typename Value::return_type>  &value_list)
-{
-	ASSERT_EQ( point_list.size(), value_list.size() ).error();
-    ASSERT_DBG(point_list.n_rows() == spacedim && point_list.n_cols() == 1).error("Invalid point size.\n");
-    for(unsigned int i=0; i< point_list.size(); i++) {
-    	ASSERT( Value(value_list[i]).n_rows()==this->value_.n_rows() )(i)(Value(value_list[i]).n_rows())(this->value_.n_rows())
-                .error("value_list has wrong number of rows");
-        value_list[i]=this->value(point_list.vec<spacedim>(i), elm);
-    }
-
-}
 
 template<int spacedim, class Value>
 void FieldAlgorithmBase<spacedim, Value>::init_unit_conversion_coefficient(const Input::Record &rec,

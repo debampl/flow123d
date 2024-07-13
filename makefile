@@ -113,6 +113,7 @@ html-doc:
 .PHONY: doxy-doc
 doxy-doc:
 	make -C $(BUILD_DIR)/doc doxy-doc
+	ln -sf $(BUILD_DIR)/doc/online-doc/flow123d/index.html doc/index.html
 
 
 TUTORIALS_IN_DOC= \
@@ -132,7 +133,7 @@ TUTORIALS_TEX=$(TUTORIALS_IN_DOC:.yaml=.tex)
 
 .PHONY: fast-ref-doc
 fast-ref-doc:
-	echo "This rule just build PDF. Use 'update-input-ref' to update 'input_refeence.tex'."
+	echo "This rule just build PDF. Use 'update-input-ref' to update 'input_reference.tex'."
 	mkdir -p $(BUILD_DIR)/doc/reference_manual
 	cd $(BUILD_DIR)/doc/reference_manual && cmake -D TUTORIALS="$(TUTORIALS_TEX)" $(SOURCE_DIR)/doc/reference_manual
 	make -C $(BUILD_DIR)/doc/reference_manual pdf
@@ -169,7 +170,7 @@ update-tutorials: $(TUTORIALS_IN_DOC)
 .PHONY: $(TUTORIALS_IN_DOC)
 $(TUTORIALS_IN_DOC):
 	@cp $(TUTOR_DIR)/$@ $(DOC_DIR)
-	@if ! ( cd $(DOC_DIR) && $(TUTOR_DIR)/make_tex.sh $@ ); \
+	@if ! ( cd $(DOC_DIR) && $(DOC_DIR)/make_tex.sh $@ ); \
 	then \
 		if [ -z $(FORCE_DOC_UPDATE) ];\
 		then \
@@ -219,6 +220,23 @@ install-hooks:
 update-build-tree:
 	@-bin/git_post_checkout_hook	# do not print command, ignore return code
 
+	
+# When building under --priviledged container (should be avoided)
+# git complains for mismatch between current user and the repository owner 
+# see: https://github.blog/2022-04-12-git-security-vulnerability-announced/, 
+# This rule can be invoked manually to set appropriate exceptions to the main repository as well as to the submodules.
+.PHONY: set-safe-directory
+set-safe-directory:
+	for d in \
+	    `pwd` \
+	    `pwd`/bin/yaml_converter \
+	    `pwd`/src/dealii \
+	    `pwd`/third_party/bparser \
+	    `pwd`/third_party/json-3.10.5 \
+	    `pwd`/third_party/gtest-1.10.0 \
+	    `pwd`/third_party/pybind11; \
+	do git config --global --add safe.directory $$d; \
+	done
 
 # initialize submodules in safe way
 # check which kind of access use this repository use same type for submodules
@@ -288,7 +306,10 @@ package: all
 	make -C build_tree package
 .PHONY : package
 
-	
+deb-package: all
+	cpack -G DEB
+.PHONY : deb-package
+
 ################################################################################################
 # Help Target
 help:

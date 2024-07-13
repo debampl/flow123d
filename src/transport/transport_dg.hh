@@ -161,45 +161,15 @@ public:
    	class EqData : public Model::ModelEqData {
    	public:
 
-        EqData() {}
-
-		/**
-		 * @brief Sets up parameters of the DG method on a given boundary edge.
-		 *
-		 * Assumption is that the edge consists of only 1 side.
-		 * @param side       		The boundary side.
-		 * @param K_size            Size of vector of tensors K.
-		 * @param K					Dispersivity tensor.
-		 * @param ad_vector         Advection vector.
-		 * @param normal_vector		Normal vector (assumed constant along the edge).
-		 * @param alpha				Penalty parameter that influences the continuity
-		 * 							of the solution (large value=more continuity).
-		 * @param gamma				Computed penalty parameters.
-		 */
-		void set_DG_parameters_boundary(Side side,
-				    const int K_size,
-		            const std::vector<arma::mat33> &K,
-		            const double flux,
-		            const arma::vec3 &normal_vector,
-		            const double alpha,
-		            double &gamma);
-
+        EqData() : ls(nullptr) {}
 
 		inline void set_time_governor(TimeGovernor *time) {
-		    ASSERT_PTR_DBG(time);
+		    ASSERT_PTR(time);
 		    this->time_ = time;
 		}
 
-
-		/// Compute and return anisotropy of given element
-		double elem_anisotropy(ElementAccessor<3> e) const;
-
-
     	/// @name Parameters of the numerical method
     	// @{
-
-    	/// Penalty parameters.
-    	std::vector<std::vector<double> > gamma;
 
     	/// DG variant ((non-)symmetric/incomplete
     	int dg_variant;
@@ -222,8 +192,6 @@ public:
     	/// @name Auxiliary fields used during assembly
     	// @{
 
-    	/// Diffusion coefficients.
-    	vector<vector<arma::mat33> > dif_coef;
     	/// Maximal number of edge sides (evaluate from dim 1,2,3)
     	unsigned int max_edg_sides;
 
@@ -308,10 +276,6 @@ public:
 	void compute_p0_interpolation();
 
 	void update_after_reactions(bool solution_changed);
-
-    void get_par_info(LongIdx * &el_4_loc, Distribution * &el_ds);
-
-    LongIdx *get_row_4_el();
 
     /// Access to balance object of Model
     inline std::shared_ptr<Balance> balance() const {

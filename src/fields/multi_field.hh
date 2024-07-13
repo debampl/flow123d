@@ -46,7 +46,7 @@ using namespace std;
 #include "mesh/region.hh"                              // for Region (ptr only)
 #include "system/exc_common.hh"                        // for ExcAssertMsg
 #include "system/exceptions.hh"                        // for ExcMessage::~E...
-#include "system/global_defs.h"                        // for OLD_ASSERT, msg
+#include "system/asserts.hh"                           // for ASSERT_PERMANENT
 #include "tools/time_governor.hh"                      // for TimeStep
 
 class Mesh;
@@ -112,9 +112,8 @@ public:
 
     /**
      * Default constructor.
-     * bc indicates boundary multifield.
      */
-    MultiField(bool bc = false);
+    MultiField();
 
     /**
      * Copy constructor.
@@ -171,12 +170,7 @@ public:
     /**
      * Implementation of @p FieldCommonBase::output().
      */
-    void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpaceFlags type) override;
-
-    /**
-     * Implementation of FieldCommonBase::observe_output().
-     */
-    void observe_output(std::shared_ptr<Observe> observe) override;
+    void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpace type) override;
 
     /**
      * Implementation of @p FieldCommonBase::is_constant().
@@ -209,14 +203,14 @@ public:
     /**
      * Implementation of FieldCommon::set_dependency().
      */
-    std::vector<const FieldCommon *> set_dependency(FieldSet &field_set, unsigned int i_reg) const override;
+    std::vector<const FieldCommon *> set_dependency(unsigned int i_reg) const override;
 
     /**
      * Returns reference to the sub-field (component) of given index @p idx.
      */
     inline SubFieldType &operator[](unsigned int idx)
     {
-    	ASSERT_LT_DBG(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
+    	ASSERT_LT(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
     	return sub_fields_[idx];
     }
     
@@ -225,7 +219,7 @@ public:
      */
     inline const SubFieldType &operator[](unsigned int idx) const
     {
-    	ASSERT_LT_DBG(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
+    	ASSERT_LT(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
         return sub_fields_[idx];
     }
     
@@ -234,7 +228,7 @@ public:
      */
     FieldCommon *get_component(unsigned int idx) override
     {
-    	ASSERT_LT_DBG(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
+    	ASSERT_LT(idx, sub_fields_.size())(this->input_name()).error("Index of subfield in MultiField is out of range.\n");
     	return &(sub_fields_[idx]);
     }
 
@@ -244,20 +238,6 @@ public:
      * Must be call after setting components, mesh and limit side.
      */
     void setup_components();
-
-    /**
-     * Returns vector of value in one given point @p on an element given by ElementAccessor @p elm.
-     * It returns reference to he actual value in order to avoid temporaries for vector and tensor values.
-     */
-//     virtual typename MultiFieldValue::return_type value(const Point &p, const ElementAccessor<spacedim> &elm) const;
-
-    /**
-     * Returns std::vector of vector values in several points at once. The base class implements
-     * trivial implementation using the @p value(,,) method. This is not optimal as it involves lot of virtual calls,
-     * but this overhead can be negligible for more complex fields as Python of Formula.
-     */
-//     virtual void value_list(const std::vector< Point >  &point_list, const  ElementAccessor<spacedim> &elm,
-//                              std::vector<typename MultiFieldValue::return_type>  &value_list) const;
 
     void set_input_list(const Input::Array &list, const TimeGovernor &tg) override;
 
@@ -294,7 +274,6 @@ public:
     const FieldValueCache<double> * value_cache() const override {
         return nullptr;
     }
-
 
 private:
     /// Subfields (items) of MultiField

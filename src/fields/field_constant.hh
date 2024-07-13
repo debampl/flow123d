@@ -59,6 +59,11 @@ public:
     static const Input::Type::Record & get_input_type();
 
     /**
+     *
+     */
+    static Input::Type::Array get_tensor_input_type();
+
+    /**
      * Smart setter from the given value to return.
      */
     FieldConstant<spacedim, Value> &set_value(const typename Value::return_type &val);
@@ -69,17 +74,6 @@ public:
     virtual void init_from_input(const Input::Record &rec, const struct FieldAlgoBaseInitData& init_data) override;
 
 
-
-    /**
-     * Returns one value in one given point. ResultType can be used to avoid some costly calculation if the result is trivial.
-     */
-    virtual typename Value::return_type const &value(const Point &p, const ElementAccessor<spacedim> &elm) override;
-
-    /**
-     * Returns std::vector of scalar values in several points at once.
-     */
-    virtual void value_list (const Armor::array &point_list, const ElementAccessor<spacedim> &elm,
-                       std::vector<typename Value::return_type>  &value_list) override;
 
     void cache_update(FieldValueCache<typename Value::element_type> &data_cache,
 			ElementCacheMap &cache_map, unsigned int region_patch_idx) override;

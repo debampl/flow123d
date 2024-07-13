@@ -19,7 +19,6 @@
 #include "input/input_type.hh"
 #include "mesh/mesh.h"
 #include "mesh/accessors.hh"
-//#include "flow/darcy_flow_mh.hh"
 
 #include "transport/transport_operator_splitting.hh"
 #include "concentration_model.hh"
@@ -115,7 +114,7 @@ struct fn_conc_diff_coef {
 
             //arma::mat33 abs_diff_mat = arma::abs(K -  kk);
             //double diff = arma::min( arma::min(abs_diff_mat) );
-            //ASSERT(  diff < 1e-12 )(diff)(K)(kk);
+            //ASSERT_PERMANENT(  diff < 1e-12 )(diff)(K)(kk);
         } else
             K.zeros();
 

@@ -3,7 +3,7 @@
 # Author: David Flanderka
 # Source for reference: Just run
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: heck correct includes of CSV files to main input YAML file.
   mesh:
@@ -15,12 +15,11 @@ problem: !Coupling_Sequential
       format:
         mesh_label: $0
         name: $2
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         r_tol: 1.0e-10
         a_tol: 1.0e-10
-    n_schurs: 2
     input_fields:
       - region: channel_1d
         anisotropy: 0.1
@@ -33,7 +32,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x-z
+          value: X[0]-X[2]
     output:
       fields:
         - piezo_head_p0
@@ -55,7 +54,9 @@ problem: !Coupling_Sequential
                 format:
                   t:
                     time: $0
-                  value: $1
+                  value: [[$1]]
+                  # CSV reader is not compatible with automatic conversion to the tensor, 
+                  # which is the input shape of all FieldConstant and FieldTimeFunction fields.
 ### We need support of CSV include in transposed part of IST if we can use !include_csv tag for MultiFields 
         - region: .BOUNDARY
           bc_conc: 
@@ -68,7 +69,7 @@ problem: !Coupling_Sequential
                     format:
                       t: 
                         time: $0
-                      value: $2
+                      value: [[$2]]
 
               -  !FieldTimeFunction
                 time_function: 
@@ -79,7 +80,7 @@ problem: !Coupling_Sequential
                     format:
                       t: 
                         time: $0
-                      value: $3
+                      value: [[$3]]
       output:
         fields:
           - porosity

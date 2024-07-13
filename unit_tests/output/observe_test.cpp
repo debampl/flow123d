@@ -22,9 +22,14 @@
 #include "system/sys_profiler.hh"
 #include "fields/field_set.hh"
 #include "fields/field.hh"
+#include "fields/equation_output.hh"
+#include "fields/assembly_observe.hh"
 #include "armadillo"
 #include "system/armadillo_tools.hh"
 #include "tools/time_governor.hh"
+#include "fem/dofhandler.hh"
+#include "fem/discrete_space.hh"
+#include "fem/fe_p.hh"
 #include "../arma_expect.hh"
 #include <fstream>
 
@@ -101,8 +106,9 @@ public:
     void check(Mesh &mesh, string local_str, string global_point_str, unsigned int i_elm) {
         find_observe_point(mesh);
         EXPECT_EQ(i_elm, observe_data_.element_idx_);
-        if (local_str != "")
+        if (local_str != "") {
             EXPECT_ARMA_EQ( arma::vec(local_str), observe_data_.local_coords_);
+        }
         EXPECT_ARMA_EQ( arma::vec3(global_point_str), observe_data_.global_coords_);
     }
 
@@ -186,7 +192,7 @@ public:
 
 
 
-class EqData : public FieldSet {
+class EqData : public EquationOutput {
 public:
     typedef Field<3, FieldValue<3>::Scalar > ScalarField;
     typedef Field<3, FieldValue<3>::Enum > EnumField;
@@ -205,6 +211,9 @@ public:
         *this += vector_field.name("vector_field").units(UnitSI::one());
         *this += tensor_field.name("tensor_field").units(UnitSI::one());
         *this += enum_field.name("enum_field").units(UnitSI::one()).input_selection(selection);
+
+        this->add_coords_field();
+        this->set_default_fieldset();
     }
 
     ScalarField scalar_field;
@@ -228,13 +237,14 @@ TEST(ObservePoint, find_observe_point) {
     //DebugOut() << "obs2";
     auto obs2 = TestObservePoint("1 1 1.001", 4, "3D front");
     obs2.check(*mesh,"0 0 0", "1 1 1", 8);
+    Profiler::uninitialize();
 }
 
 
 TEST(Observe, all) {
     Profiler::instance();
     armadillo_setup();
-    EqData field_set;
+    std::shared_ptr<EqData> field_set = std::make_shared<EqData>();
 
     auto output_type = Input::Type::Record("Output", "")
         .declare_key("observe_points", Input::Type::Array(ObservePoint::get_input_type()), Input::Type::Default::obligatory(), "")
@@ -248,31 +258,41 @@ TEST(Observe, all) {
 
     FilePath mesh_file( string(UNIT_TESTS_SRC_DIR) + "/mesh/simplest_cube.msh", FilePath::input_file);
     Mesh *mesh = mesh_full_constructor("{ mesh_file=\"" + (string)mesh_file + "\", optimize_mesh=false, global_snap_radius=1.0 }");
+    field_set->set_mesh(*mesh);
+    MixedPtr<FE_P_disc> fe_p_disc(0);
+    std::shared_ptr<DOFHandlerMultiDim> dh = std::make_shared<DOFHandlerMultiDim>(*mesh);
+    std::shared_ptr<DiscreteSpace> ds = std::make_shared<EqualOrderDiscreteSpace>( mesh, fe_p_disc);
+    dh->distribute_dofs(ds);
 
     {
     std::shared_ptr<TestObserve> obs = std::make_shared<TestObserve>(*mesh, in_rec.val<Input::Array>("observe_points"));
     obs->check_points_input();
     obs->check_observe_points();
 
+    std::unordered_set<string> observe_fields_list;
+    observe_fields_list.insert("scalar_field");
+    observe_fields_list.insert("vector_field");
+    observe_fields_list.insert("tensor_field");
+    //observe_fields_list.insert("enum_field");
+    GenericAssemblyObserve< AssemblyObserveOutput > * observe_output_assembly;
+    observe_output_assembly = new GenericAssemblyObserve< AssemblyObserveOutput >( field_set.get(), observe_fields_list, std::dynamic_pointer_cast<Observe>(obs) );
+
     // read fiels
     TimeGovernor tg(0.0, 1.0);
-    field_set.set_mesh(*mesh);
-    field_set.set_input_list( in_rec.val<Input::Array>("input_fields"), tg );
-    field_set.set_time(tg.step(), LimitSide::right);
+    field_set->set_input_list( in_rec.val<Input::Array>("input_fields"), tg );
+    field_set->set_time(tg.step(), LimitSide::right);
 
-    field_set.scalar_field.observe_output(obs);
-    field_set.enum_field.observe_output(obs);
-    field_set.vector_field.observe_output(obs);
-    field_set.tensor_field.observe_output(obs);
+    for(auto field_name : observe_fields_list) {
+        auto &field = (*field_set)[field_name];
+        obs->prepare_compute_data(field.name(), field.time(), field.n_shape());
+    }
+
+    observe_output_assembly->assemble(dh);
     obs->output_time_frame( true );
 
     tg.next_time();
-    field_set.set_time( tg.step(), LimitSide::right);
-    field_set.scalar_field.observe_output(obs);
-    field_set.enum_field.observe_output(obs);
-    field_set.vector_field.observe_output(obs);
-    field_set.tensor_field.observe_output(obs);
-    obs->output_time_frame( true );
+    field_set->set_time( tg.step(), LimitSide::right);
+    observe_output_assembly->assemble(dh);
     }
     // closed observe file 'test_eq_observe.yaml'
     // check results
@@ -288,5 +308,6 @@ TEST(Observe, all) {
 
 //    if (mesh->get_el_ds()->myp()==0)
 //        EXPECT_EQ(str_obs_file_ref.str(), str_obs_file.str());
+    Profiler::uninitialize();
 }
 

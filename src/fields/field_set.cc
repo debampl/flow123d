@@ -21,18 +21,44 @@
 #include "fem/mapping_p1.hh"
 #include "mesh/ref_element.hh"
 #include "tools/bidirectional_map.hh"
+#include "tools/unit_converter.hh"
 #include <boost/algorithm/string/replace.hpp>
 #include <queue>
 
 
 FieldSet::FieldSet()
-{}
+: mesh_(nullptr) {}
+
+
+const Input::Type::Selection & FieldSet::get_user_field_shape_selection() {
+	return Input::Type::Selection("User_fields_shape", "Allowed shapes of user fields.")
+		.add_value(FieldSet::scalar, "scalar", "Scalar user field.")
+		.add_value(FieldSet::vector, "vector", "Vector user field.")
+		.add_value(FieldSet::tensor, "tensor", "Tensor user field.")
+		.close();
+}
+
+const Input::Type::Record & FieldSet::make_user_field_type(const std::string &equation_name) {
+    static Field<3, FieldValue<3>::Scalar> scalar_field;
+    static Field<3, FieldValue<3>::VectorFixed> vector_field;
+    static Field<3, FieldValue<3>::TensorFixed> tensor_field;
+    return Input::Type::Record( equation_name+":UserData", "Record to set fields of the equation: "+equation_name+".")
+        .declare_key("name", Input::Type::String(), Input::Type::Default::obligatory(),
+                     "Name of user defined field.")
+        .declare_key("shape_type", FieldSet::get_user_field_shape_selection(), Input::Type::Default("\"scalar\""), "Shape of user field.")
+        .declare_key("field", tensor_field.get_input_type(), Input::Type::Default::obligatory(),
+                     "Instance of FieldAlgoBase descendant.\n"
+        		     "Please specify shape of field in 'shape_type' key.")
+        .declare_key("unit", UnitConverter::get_input_type(), Input::Type::Default::optional(),
+                     "Unit of the field values provided in the main input file, in the external file, or "
+                     "by a function (FieldPython).")
+		.close();
+}
 
 FieldSet &FieldSet::operator +=(FieldCommon &add_field) {
     FieldCommon *found_field = field(add_field.name());
     if (found_field) {
-    	OLD_ASSERT(&add_field==found_field, "Another field of the same name exists when adding field: %s\n",
-                add_field.name().c_str());
+    	ASSERT_PERMANENT(&add_field==found_field)(add_field.name()).error("You cannot add field of the same name that exists in FieldSet!\n");
     } else {
         field_list.push_back(&add_field);
     }
@@ -117,7 +143,7 @@ Input::Type::Selection FieldSet::make_output_field_selection(const string &name,
     // add value for each field excluding boundary fields
     for( auto field : field_list)
     {
-        if ( !field->is_bc() && field->flags().match( FieldFlag::allow_output) )
+        if ( field->flags().match( FieldFlag::allow_output) )
         {
             string desc = "Output of the field " + field->name() + " (($[" + field->units().format_latex()+"]$))";
             if (field->description().length() > 0)
@@ -156,7 +182,7 @@ FieldCommon &FieldSet::operator[](const std::string &field_name) const {
     FieldCommon *found_field=field(field_name);
     if (found_field) return *found_field;
 
-    THROW(ExcUnknownField() << FieldCommon::EI_Field(field_name));
+    THROW(ExcUnknownField() << FieldCommon::EI_Field(field_name) << EI_FieldType("FieldSet"));
     return *field_list[0]; // formal to prevent compiler warning
 }
 
@@ -192,7 +218,7 @@ bool FieldSet::is_jump_time() const {
 
 
 void FieldSet::cache_update(ElementCacheMap &cache_map) {
-    ASSERT_GT_DBG(region_field_update_order_.size(), 0).error("Variable 'region_dependency_list' is empty. Did you call 'set_dependency' method?\n");
+    ASSERT_GT(region_field_update_order_.size(), 0).error("Variable 'region_dependency_list' is empty. Did you call 'set_dependency' method?\n");
     for (unsigned int i_reg_patch=0; i_reg_patch<cache_map.n_regions(); ++i_reg_patch) {
         for (const FieldCommon *field : region_field_update_order_[cache_map.region_idx_from_chunk_position(i_reg_patch)])
             field->cache_update(cache_map, i_reg_patch);
@@ -204,7 +230,6 @@ void FieldSet::set_dependency(FieldSet &used_fieldset) {
     region_field_update_order_.clear();
     std::unordered_set<const FieldCommon *> used_fields;
 
-    unordered_map<std::string, unsigned int>::iterator it;
     for (unsigned int i_reg=0; i_reg<mesh_->region_db().size(); ++i_reg) {
         for (FieldListAccessor f_acc : used_fieldset.fields_range()) {
             topological_sort( f_acc.field(), i_reg, used_fields );
@@ -217,7 +242,7 @@ void FieldSet::set_dependency(FieldSet &used_fieldset) {
 void FieldSet::topological_sort(const FieldCommon *f, unsigned int i_reg, std::unordered_set<const FieldCommon *> &used_fields) {
     if (used_fields.find(f) != used_fields.end() ) return; // field processed
     used_fields.insert(f);
-    auto dep_vec = f->set_dependency(*this, i_reg); // vector of dependent fields
+    auto dep_vec = f->set_dependency(i_reg); // vector of dependent fields
     for (auto f_dep : dep_vec) {
         topological_sort(f_dep, i_reg, used_fields);
     }
@@ -238,6 +263,11 @@ void FieldSet::add_coords_field() {
                .flags( FieldFlag::input_copy )
                .description("Depth field.");
 
+    if (this->mesh_ != nullptr) {
+        X_.set_mesh(*this->mesh_);
+        depth_.set_mesh(*this->mesh_);
+    }
+
     depth_.set_field_coords(&X_);
 }
 
@@ -250,7 +280,7 @@ Range<FieldListAccessor> FieldSet::fields_range() const {
 
 
 std::string FieldSet::print_dependency() const {
-    ASSERT_GT_DBG(region_field_update_order_.size(), 0).error("Variable 'region_dependency_list' is empty. Did you call 'set_dependency' method?\n");
+    ASSERT_GT(region_field_update_order_.size(), 0).error("Variable 'region_dependency_list' is empty. Did you call 'set_dependency' method?\n");
     std::stringstream s;
     for (auto reg_it : region_field_update_order_) {
         s << "\nregion_idx " << reg_it.first << ": ";

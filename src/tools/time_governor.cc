@@ -280,7 +280,7 @@ std::shared_ptr<TimeUnitConversion> TimeStep::get_unit_conversion() const
 }
 
 ostream& operator<<(ostream& out, const TimeStep& t_step) {
-    out << "time: " << t_step.end() << "step: " << t_step.length() << endl;
+    out << "time: " << t_step.end() << " dt: " << t_step.length() << endl;
     return out;
 }
 
@@ -666,7 +666,7 @@ double TimeGovernor::estimate_dt() const {
 
 void TimeGovernor::next_time()
 {
-    OLD_ASSERT_LE(0.0, t());
+    ASSERT_LE(0.0, t());
     if (is_end()) return;
     
 

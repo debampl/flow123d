@@ -1,4 +1,4 @@
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Injection into 2 fractures differing in cross section.
   mesh:
@@ -26,7 +26,7 @@ problem: !Coupling_Sequential
         # - conductivity
     a_tol: 0
     r_tol: 1e-9
-    flow_equation: !Flow_Richards_LMH
+    flow_equation: !Flow_Darcy_LMH
         input_fields:
           - region: rock
             conductivity: 1e-3          

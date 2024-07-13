@@ -20,10 +20,11 @@
 #include "fields/field_formula.hh"
 #include "fields/field_instances.hh"	// for instantiation macros
 #include "fields/surface_depth.hh"
-#include "fparser.hh"
 #include "input/input_type.hh"
-#include "include/arena_alloc.hh"       // bparser
+//#include "include/arena_alloc.hh"       // bparser
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/regex.hpp>
+
 
 
 /// Implementation.
@@ -40,7 +41,7 @@ const Input::Type::Record & FieldFormula<spacedim, Value>::get_input_type()
     return it::Record("FieldFormula", FieldAlgorithmBase<spacedim,Value>::template_name()+" Field given by runtime interpreted formula.")
             .derive_from(FieldAlgorithmBase<spacedim, Value>::get_input_type())
             .copy_keys(FieldAlgorithmBase<spacedim, Value>::get_field_algo_common_keys())
-            .declare_key("value", STI::get_input_type() , it::Default::obligatory(),
+            .declare_key("value", it::String(), it::Default::obligatory(),
                                         "String, array of strings, or matrix of strings with formulas for individual "
                                         "entries of scalar, vector, or tensor value respectively.\n"
                                         "For vector values, you can use just one string to enter homogeneous vector.\n"
@@ -72,18 +73,10 @@ const int FieldFormula<spacedim, Value>::registrar =
 template <int spacedim, class Value>
 FieldFormula<spacedim, Value>::FieldFormula( unsigned int n_comp)
 : FieldAlgorithmBase<spacedim, Value>(n_comp),
-  formula_matrix_(this->value_.n_rows(), this->value_.n_cols()),
-  first_time_set_(true), arena_alloc_(nullptr)
+  b_parser_( CacheMapElementNumber::get() ),
+  arena_alloc_(nullptr)
 {
 	this->is_constant_in_space_ = false;
-    parser_matrix_.resize(this->value_.n_rows());
-    for(unsigned int row=0; row < this->value_.n_rows(); row++) {
-        parser_matrix_[row].resize(this->value_.n_cols());
-    }
-    b_parser_.reserve(this->value_.n_rows()*this->value_.n_cols());
-    for(unsigned int i=0; i < this->value_.n_rows()*this->value_.n_cols(); i++) {
-        b_parser_.emplace_back( 1.1 * CacheMapElementNumber::get() );
-    }
 }
 
 
@@ -93,7 +86,7 @@ void FieldFormula<spacedim, Value>::init_from_input(const Input::Record &rec, co
 	this->init_unit_conversion_coefficient(rec, init_data);
 
 	// read formulas form input
-    STI::init_from_input( formula_matrix_, rec.val<typename STI::AccessType>("value") );
+    this->formula_ = rec.val<std::string>("value");
     in_rec_ = rec;
 }
 
@@ -101,138 +94,19 @@ void FieldFormula<spacedim, Value>::init_from_input(const Input::Record &rec, co
 template <int spacedim, class Value>
 bool FieldFormula<spacedim, Value>::set_time(const TimeStep &time) {
 
-	/* OLD FPARSER CODE */
-    bool any_parser_changed = false;
-    std::string value_input_address = in_rec_.address_string();
-    has_depth_var_ = false;
-    this->is_constant_in_space_ = true; // set flag to true, then if found 'x', 'y', 'z' or 'd' reset to false
-
-
-    std::string vars = string("x,y,z").substr(0, 2*spacedim-1);
-    std::vector<bool> time_dependent(this->value_.n_rows() * this->value_.n_cols(), false);
-    // update parsers
-    for(unsigned int row=0; row < this->value_.n_rows(); row++)
-        for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            // get all variable names from the formula
-            std::vector<std::string> var_list;
-
-            FunctionParser tmp_parser;
-            tmp_parser.AddConstant("Pi", 3.14159265358979323846);
-            tmp_parser.AddConstant("E", 2.71828182845904523536);
-
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
-            {
-                int err=tmp_parser.ParseAndDeduceVariables(formula_matrix_.at(row,col), var_list);
-                ASSERT(err != FunctionParser::FP_NO_ERROR)(tmp_parser.ErrorMsg()).error("ParseAndDeduceVariables error\n");
-            }
-#pragma GCC diagnostic pop
-
-            for(std::string &var_name : var_list ) {
-                if (var_name == std::string("t") ) time_dependent[row*this->value_.n_rows()+col]=true;
-                else if (var_name == std::string("d") ) {
-                	this->is_constant_in_space_ = false;
-                	if (surface_depth_)
-                		has_depth_var_=true;
-                	else
-                    	WarningOut().fmt("Unset surface region. Variable '{}' in the FieldFormula[{}][{}] == '{}' will be set to zero\n at the input address:\n {} \n",
-                                var_name, row, col, formula_matrix_.at(row,col), value_input_address );
-                }
-                else if (var_name == "x" || var_name == "y" || var_name == "z") {
-                	this->is_constant_in_space_ = false;
-                	continue;
-                }
-                else
-                	WarningOut().fmt("Unknown variable '{}' in the  FieldFormula[{}][{}] == '{}'\n at the input address:\n {} \n",
-                            var_name, row, col, formula_matrix_.at(row,col), value_input_address );
-            }
-
-            // Seems that we can not just add 't' constant to tmp_parser, since it was already Parsed.
-            parser_matrix_[row][col].AddConstant("Pi", 3.14159265358979323846);
-            parser_matrix_[row][col].AddConstant("E", 2.71828182845904523536);
-            if (time_dependent[row*this->value_.n_rows()+col]) {
-                parser_matrix_[row][col].AddConstant("t", time.end());
-            }
-        }
-
-    if (has_depth_var_)
-        vars += string(",d");
-    vars += string(",cross_section,const_scalar,scalar_field,unknown_scalar,integer_scalar"); // Temporary solution only for testing field dependency in BParser
-
-	// update parsers
-	for(unsigned int row=0; row < this->value_.n_rows(); row++)
-		for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            // TODO:
-            // - possibly add user defined constants and units here ...
-            // - optimization; possibly parse only if time_dependent  || formula_matrix[][] has changed ...
-            //parser_matrix_[row][col] = tmp_parser;
-            if (time_dependent[row*this->value_.n_rows()+col] || first_time_set_ ) {
-                parser_matrix_[row][col].Parse(formula_matrix_.at(row,col), vars);
-
-                if ( parser_matrix_[row][col].GetParseErrorType() != FunctionParser::FP_NO_ERROR ) {
-                    THROW( ExcFParserError() << EI_FParserMsg(parser_matrix_[row][col].ErrorMsg()) << EI_Row(row)
-                        << EI_Col(col) << EI_Formula(formula_matrix_.at(row,col)) );
-                }
-
-                parser_matrix_[row][col].Optimize();
-                any_parser_changed = true;
-            }
-
-
-        }
-
-    first_time_set_ = false;
     this->time_=time;
-    return any_parser_changed;
+	this->is_constant_in_space_ = false;
+    return true;
+
 }
 
 
 template <int spacedim, class Value>
-void FieldFormula<spacedim, Value>::set_mesh(const Mesh *mesh, FMT_UNUSED bool boundary_domain) {
+void FieldFormula<spacedim, Value>::set_mesh(const Mesh *mesh) {
     // create SurfaceDepth object if surface region is set
     std::string surface_region;
     if ( in_rec_.opt_val("surface_region", surface_region) ) {
         surface_depth_ = std::make_shared<SurfaceDepth>(mesh, surface_region, in_rec_.val<std::string>("surface_direction"));
-    }
-}
-
-
-/**
- * Returns one value in one given point. ResultType can be used to avoid some costly calculation if the result is trivial.
- */
-template <int spacedim, class Value>
-typename Value::return_type const & FieldFormula<spacedim, Value>::value(const Point &p, FMT_UNUSED  const ElementAccessor<spacedim> &elm)
-{
-
-    auto p_depth = this->eval_depth_var(p);
-    for(unsigned int row=0; row < this->value_.n_rows(); row++)
-        for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            this->value_(row,col) = this->unit_conversion_coefficient_ * parser_matrix_[row][col].Eval(p_depth.memptr());
-        }
-    return this->r_value_;
-}
-
-
-/**
- * Returns std::vector of scalar values in several points at once.
- */
-template <int spacedim, class Value>
-void FieldFormula<spacedim, Value>::value_list (const Armor::array &point_list, FMT_UNUSED const ElementAccessor<spacedim> &elm,
-                   std::vector<typename Value::return_type>  &value_list)
-{
-	ASSERT_EQ( point_list.size(), value_list.size() );
-    ASSERT_DBG( point_list.n_rows() == spacedim && point_list.n_cols() == 1).error("Invalid point size.\n");
-    for(unsigned int i=0; i< point_list.size(); i++) {
-        Value envelope(value_list[i]);
-        ASSERT_EQ( envelope.n_rows(), this->value_.n_rows() )(i)(envelope.n_rows())(this->value_.n_rows())
-        		.error("value_list['i'] has wrong number of rows\n");
-        auto p_depth = this->eval_depth_var(point_list.vec<spacedim>(i));
-
-        for(unsigned int row=0; row < this->value_.n_rows(); row++)
-            for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-                envelope(row,col) = this->unit_conversion_coefficient_ * parser_matrix_[row][col].Eval(p_depth.memptr());
-            }
     }
 }
 
@@ -262,18 +136,20 @@ void FieldFormula<spacedim, Value>::cache_update(FieldValueCache<typename Value:
     }
 
     // Get vector of subsets as subarray
-    uint subsets_begin = reg_chunk_begin / ElementCacheMap::simd_size_double;
-    uint subsets_end = reg_chunk_end / ElementCacheMap::simd_size_double;
+    uint subsets_begin = reg_chunk_begin / cache_map.simd_size_double;
+    uint subsets_end = reg_chunk_end / cache_map.simd_size_double;
     std::vector<uint> subset_vec;
     subset_vec.assign(subsets_ + subsets_begin, subsets_ + subsets_end);
 
+    b_parser_.set_subset(subset_vec);
+    b_parser_.run();
+    uint vec_size = CacheMapElementNumber::get();
     for(unsigned int row=0; row < this->value_.n_rows(); row++)
         for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            b_parser_[row*this->value_.n_cols()+col].set_subset(subset_vec);
-            b_parser_[row*this->value_.n_cols()+col].run();
+            uint comp_shift = (row*this->value_.n_cols()+col) * vec_size;
             for (unsigned int i=reg_chunk_begin; i<reg_chunk_end; ++i) {
                 auto cache_val = data_cache.template mat<Value::NRows_, Value::NCols_>(i);
-                cache_val(row, col) = res_[i];
+                cache_val(row, col) = this->unit_conversion_coefficient_ * res_[i + comp_shift];
                 data_cache.set(i) = cache_val;
             }
         }
@@ -300,59 +176,26 @@ inline arma::vec FieldFormula<spacedim, Value>::eval_depth_var(const Point &p)
 	}
 }
 
-uint n_shape(std::vector<uint> shape) {
-    uint r = 1;
-    for (auto i : shape) r *= i;
-    return r;
-}
-
-
 template <int spacedim, class Value>
 std::vector<const FieldCommon * > FieldFormula<spacedim, Value>::set_dependency(FieldSet &field_set) {
     required_fields_.clear(); // returned value
 
-	std::vector<std::string> variables;
-    for(unsigned int row=0; row < this->value_.n_rows(); row++)
-        for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            // set expression and data to BParser
-            unsigned int i_p = row*this->value_.n_cols()+col;
-            //b_parser_[i_p].parse(formula_matrix_.at(row,col));
-            std::string expr = formula_matrix_.at(row,col); // Need replace some operations to make them compatible with BParser.
-                                                            // It will be solved by conversion script after remove fparser, but
-                                                            // we mix using of BParser and fparser and need this solution now.
-            boost::replace_all(expr, "^", "**"); // power function
-            boost::replace_all(expr, "max(", "maximum("); // max function
-            boost::replace_all(expr, "min(", "minimum("); // min function
-            boost::replace_all(expr, "Pi", "pi"); // Math.pi
-            boost::replace_all(expr, "E", "e"); // Math.e
-            {  // ternary operator
-                std::string pref("if(");
-                auto res = std::mismatch(pref.begin(), pref.end(), expr.begin());
-                if ( (res.first == pref.end()) && (expr.back() == ')') ) {
-                    std::string subexpr = expr.substr(3, expr.size()-4);
-                    std::string delimiter = ",";
-                    std::string cond = subexpr.substr(0, subexpr.find(delimiter));
-                    subexpr.erase(0, cond.size()+1);
-                    std::string if_case = subexpr.substr(0, subexpr.find(delimiter));
-                    std::string else_case = subexpr.substr(if_case.size()+1);
-                    expr = "(" + if_case + " if " + cond + " else " + else_case +")";
-                }
-            }
-            try {
-                b_parser_[i_p].parse( expr );
-            } catch (std::exception const& e) {
-                if (typeid(e) == typeid(bparser::Exception)) THROW( ExcParserError() << EI_BParserMsg(e.what()) );
-                else throw;
-            }
-            variables.insert(variables.end(), b_parser_[i_p].variables().begin(), b_parser_[i_p].variables().end());
-        }
-
+    // set expression and data to BParser
+    try {
+        b_parser_.parse( formula_ );
+    } catch (std::exception const& e) {
+        if (typeid(e) == typeid(bparser::Exception))
+            THROW( ExcParserError() << EI_BParserMsg(e.what()) << EI_Formula(formula_) << Input::EI_Address( in_rec_.address_string() ) );
+        else throw;
+    }
+    std::vector<std::string> variables = b_parser_.free_symbols();
     std::sort( variables.begin(), variables.end() );
     variables.erase( std::unique( variables.begin(), variables.end() ), variables.end() );
+
     has_time_=false;
     sum_shape_sizes_=0; // scecifies size of arena
     for (auto var : variables) {
-        if (var == "x" || var == "y" || var == "z") {
+        if (var == "X" || var == "x" || var == "y" || var == "z") {
             required_fields_.push_back( field_set.field("X") );
             sum_shape_sizes_ += spacedim;
         }
@@ -360,12 +203,12 @@ std::vector<const FieldCommon * > FieldFormula<spacedim, Value>::set_dependency(
         else {
             auto field_ptr = field_set.field(var);
             if (field_ptr != nullptr) required_fields_.push_back( field_ptr );
-            else THROW( ExcUnknownField() << EI_Field(var) );
+            else THROW( FieldSet::ExcUnknownField() << FieldCommon::EI_Field(var) << FieldSet::EI_FieldType("formula") << Input::EI_Address( in_rec_.address_string() ) );
             // TODO: Test the exception, report input line of the formula.
-            if (field_ptr->value_cache() == nullptr) THROW( ExcNotDoubleField() << EI_Field(var) );
+            if (field_ptr->value_cache() == nullptr) THROW( ExcNotDoubleField() << EI_Field(var) << Input::EI_Address( in_rec_.address_string() ) );
             // TODO: Test the exception, report input line of the formula.
 
-            sum_shape_sizes_ += n_shape( field_ptr->shape_ );
+            sum_shape_sizes_ += field_ptr->n_shape();
             if (var == "d") {
                 field_set.set_surface_depth(this->surface_depth_);
             }
@@ -379,21 +222,25 @@ std::vector<const FieldCommon * > FieldFormula<spacedim, Value>::set_dependency(
 template <int spacedim, class Value>
 void FieldFormula<spacedim, Value>::cache_reinit(FMT_UNUSED const ElementCacheMap &cache_map)
 {
+	// Can not compile expression in set_time as the necessary cache size is not known there yet.
+
     if (arena_alloc_!=nullptr) {
         delete arena_alloc_;
     }
     eval_field_data_.clear();
-    uint vec_size = 1.1 * CacheMapElementNumber::get();
-    while (vec_size%ElementCacheMap::simd_size_double > 0) vec_size++; // alignment of block size
+    uint vec_size = CacheMapElementNumber::get();
+
     // number of subset alignment to block size
-    uint n_subsets = (vec_size+ElementCacheMap::simd_size_double-1) / ElementCacheMap::simd_size_double;
-    uint n_vectors = sum_shape_sizes_ + 1; // needs add space of result vector
-    arena_alloc_ = new bparser::ArenaAlloc(ElementCacheMap::simd_size_double, n_vectors * vec_size * sizeof(double) + n_subsets * sizeof(uint));
-    res_ = arena_alloc_->create_array<double>(vec_size);
+    uint n_subsets = vec_size / cache_map.simd_size_double;
+    uint res_comp = Value::NRows_ * Value::NCols_;
+    uint n_vectors = sum_shape_sizes_ + res_comp; // needs add space of result vector
+    arena_alloc_ = new bparser::ArenaAlloc(cache_map.simd_size_double, n_vectors * vec_size * sizeof(double) + n_subsets * sizeof(uint));
+    res_ = arena_alloc_->create_array<double>(vec_size * res_comp);
     for (auto field : required_fields_) {
         std::string field_name = field->name();
-        eval_field_data_[field] = arena_alloc_->create_array<double>(n_shape( field->shape_ ) * vec_size);
+        eval_field_data_[field] = arena_alloc_->create_array<double>(field->n_shape() * vec_size);
         if (field_name == "X") {
+            X_ = eval_field_data_[field] + 0;
             x_ = eval_field_data_[field] + 0;
             y_ = eval_field_data_[field] + vec_size;
             z_ = eval_field_data_[field] + 2*vec_size;
@@ -401,25 +248,29 @@ void FieldFormula<spacedim, Value>::cache_reinit(FMT_UNUSED const ElementCacheMa
     }
     subsets_ = arena_alloc_->create_array<uint>(n_subsets);
 
-    for(unsigned int row=0; row < this->value_.n_rows(); row++)
-        for(unsigned int col=0; col < this->value_.n_cols(); col++) {
-            // set expression and data to BParser
-            unsigned int i_p = row*this->value_.n_cols()+col;
-            if (has_time_) {
-                b_parser_[i_p].set_constant("t",  {}, {this->time_.end()});
-            }
-            for (auto field : required_fields_) {
-                std::string field_name = field->name();
-                if (field_name == "X") {
-                    b_parser_[i_p].set_variable("x",  {}, x_);
-                    b_parser_[i_p].set_variable("y",  {}, y_);
-                    b_parser_[i_p].set_variable("z",  {}, z_);
-                } else
-                    b_parser_[i_p].set_variable(field_name,  {}, eval_field_data_[field]);
-            }
-            b_parser_[i_p].set_variable("_result_", {}, res_);
-            b_parser_[i_p].compile();
+    // set expression and data to BParser
+    if (has_time_) {
+        b_parser_.set_constant("t",  {}, {this->time_.end()});
+    }
+    for (auto field : required_fields_) {
+        std::string field_name = field->name();
+        if (field_name == "X") {
+            b_parser_.set_variable("X",  {3}, X_);
+            b_parser_.set_variable("x",  {}, x_);
+            b_parser_.set_variable("y",  {}, y_);
+            b_parser_.set_variable("z",  {}, z_);
+        } else {
+            std::vector<uint> f_shape = {};
+            if (field->n_shape() > 1) f_shape = field->shape_;
+            b_parser_.set_variable(field_name, f_shape, eval_field_data_[field]);
         }
+    }
+    std::vector<uint> shape = {};
+    if (Value::NRows_ > 1) shape.push_back(Value::NRows_);
+    if (Value::NCols_ > 1) shape.push_back(Value::NCols_);
+    b_parser_.set_variable("_result_", shape, res_);
+    b_parser_.compile();
+    // set subset vector
     for (uint i=0; i<n_subsets; ++i)
         subsets_[i] = i;
 }

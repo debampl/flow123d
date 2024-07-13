@@ -3,7 +3,7 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Tests correct functionality of setting input fields by user defined units.
   mesh:
@@ -48,6 +48,7 @@ problem: !Coupling_Sequential
       converge_on_stagnation: false
       linear_solver: !Petsc
         a_tol: 1e-11
+        d_tol: 1e8
     output:
       fields:
         - pressure_p0

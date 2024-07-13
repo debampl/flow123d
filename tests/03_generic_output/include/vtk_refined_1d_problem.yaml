@@ -1,11 +1,11 @@
 description: Output mesh test 1d. Darcy flow- adaptive refinement, transport - adaptive refinement.
 mesh:
   mesh_file: ../00_mesh/line_x_20el.msh
-flow_equation: !Flow_Darcy_MH
+flow_equation: !Flow_Darcy_LMH
   input_fields:
     - region: plane
       water_source_density: !FieldFormula
-        value: 1/(x+0.01)
+        value: 1/(X[0]+0.01)
     - region: .BOUNDARY
       bc_type: dirichlet
       bc_pressure: !FieldFormula
@@ -13,7 +13,6 @@ flow_equation: !Flow_Darcy_MH
   nonlinear_solver:
     linear_solver: !Petsc
       a_tol: 1.0e-07
-  n_schurs: 2
   output:
     fields:
       - water_source_density
@@ -37,7 +36,7 @@ solute_equation: !Coupling_OperatorSplitting
       - region: plane
         init_conc: 0.5
         porosity: !FieldFormula
-          value: -1/(x-1.01)
+          value: -1/(X[0]-1.01)
       - region: .BOUNDARY
         bc_conc:
           - 0.0

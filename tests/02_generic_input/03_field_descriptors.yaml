@@ -3,13 +3,13 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test correct reading of input field descriptors
   mesh:
     mesh_file: ../00_mesh/square_0.2x0.2.msh
   # steady velocity field, with velocity v:0.1
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-12
@@ -24,11 +24,16 @@ problem: !Coupling_Sequential
           mesh_data_file: ./03_field_descriptors-000000.vtu
           field_name: sigma
           input_discretization: native_data
-      - region: .BOUNDARY
+      - region: .left
+        bc_type: dirichlet
+        bc_pressure: !FieldFE
+          mesh_data_file: ../00_mesh/square_0.2x0.2.msh
+          field_name: bc_pressure
+          is_boundary: true
+      - region: .right
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: 0.1*x
-    n_schurs: 2
+          value: 0.1*X[1]
     output:
       fields:
         - pressure_p0

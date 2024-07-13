@@ -1,19 +1,18 @@
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Steady flow + transport with source
   mesh:
     mesh_file: ../00_mesh/rectangle_2x5.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-12
         r_tol: 1.0e-12
-    n_schurs: 2
     input_fields:
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: y
+          value: X[1]
       - region: BULK
         cross_section: 1
         anisotropy: 1
@@ -52,7 +51,7 @@ problem: !Coupling_Sequential
         variant: ascii
       times:
         - step: 0.8
-      precision: 15  
+      precision: 15
     substances:
       - conc
     time:

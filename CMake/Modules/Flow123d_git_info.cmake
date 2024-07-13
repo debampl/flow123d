@@ -2,6 +2,7 @@
 # Detect Git executable and retrieve some information from the repository.
 # 
 # Use variable: FLOW123D_SOURCE_DIR as working directory when calling git 
+#               FLOW_MANUAL_VERSION 
 #
 # Module set (not cached) these variables:
 # GIT_BRANCH - current git branch
@@ -36,6 +37,7 @@ if (GIT_FOUND)
     OUTPUT_VARIABLE GIT_DESCRIBE
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
+  
   
   # Get remote branch we are tracking
   execute_process(
@@ -77,15 +79,23 @@ if (GIT_FOUND)
   #message(STATUS "GIT_URL_TMP: ${GIT_URL_TMP}")
   #message(STATUS "GIT_URL: ${GIT_URL}")
   
-  # first try to read version from file
-  FILE(READ ${FLOW123D_SOURCE_DIR}/version FLOW_MANUAL_VERSION)
-  
+  # Allow providing the version when calling the cmake or in cmake.config
+  # Version is used in package builds.
+  #message(STATUS "MANUAL VER: ${FLOW_MANUAL_VERSION}")
+  if( NOT DEFINED FLOW_MANUAL_VERSION)
+        # first try to read version from file
+        FILE(READ ${FLOW123D_SOURCE_DIR}/version FLOW_MANUAL_VERSION)
+  endif()
 
+  #message(STATUS "MANUAL VER: ${FLOW_MANUAL_VERSION}")
+  
   if(${FLOW_MANUAL_VERSION} MATCHES ".*([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*).*")
     # version stored in file is in correct format 
     # so we extract version components into list
     STRING(REGEX REPLACE "([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*)"
            "\\1;\\2;\\3" BRANCH_VERSION_LIST ${FLOW_MANUAL_VERSION})
+    #message(STATUS "BRANCH VER LIST: ${BRANCH_VERSION_LIST}")
+  
   elseif(${GIT_BRANCH} MATCHES "([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*)\\.([A-Za-z0-9_]*)")
     # git branch is in correct format 
     # so we extract version components into list
@@ -103,11 +113,22 @@ if (GIT_FOUND)
   list(GET BRANCH_VERSION_LIST 2 GIT_VERSION_PATCH)
       
   set(GIT_BRANCH ${GIT_BRANCH} CACHE INTERNAL "Current git branch.")
-  set(GIT_DESCRIBE ${GIT_DESCRIBE} CACHE INTERNAL "Human readable description of last git commit.")
+  set(GIT_DESCRIBE ${GIT_DESCRIBE} CACHE INTERNAL "Human readable description of the commit containing last annotated tag.")
+  set(GIT_BRANCH_DESCRIBE ${GIT_BRANCH}-${GIT_SHORT_HASH} CACHE INTERNAL "Human readable description of the commit containing actual branch.") 
   set(GIT_SHORT_HASH ${GIT_SHORT_HASH} CACHE INTERNAL "Short hash of current commit.")
   set(GIT_URL ${GIT_URL} CACHE INTERNAL "URL of remote repository.")
   set(GIT_VERSION_MAJOR ${GIT_VERSION_MAJOR} CACHE INTERNAL "Major version component.")
   set(GIT_VERSION_MINOR ${GIT_VERSION_MINOR} CACHE INTERNAL "Minor version component.")
   set(GIT_VERSION_PATCH ${GIT_VERSION_PATCH} CACHE INTERNAL "Patch version component.")
   set(GIT_VERSION_FULL ${GIT_VERSION_MAJOR}.${GIT_VERSION_MINOR}.${GIT_VERSION_PATCH} CACHE INTERNAL "Full version name.")
+  
+  message(STATUS "======================================")
+  message(STATUS "====== Git summary ===================")
+  message(STATUS "======================================")
+  message(STATUS "GIT_BRANCH:      ${GIT_BRANCH}")
+  message(STATUS "GIT_DESCRIBE:    ${GIT_DESCRIBE}")
+  message(STATUS "GIT_BRANCH_DESCRIBE:    ${GIT_BRANCH_DESCRIBE}")
+  message(STATUS "GIT_URL:         ${GIT_URL}")
+  message(STATUS "GIT_SHORT_HASH:  ${GIT_SHORT_HASH}")
+  message(STATUS "GIT_VERSION_FULL: ${GIT_VERSION_FULL}")
 endif()

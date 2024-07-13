@@ -3,7 +3,7 @@
 # Source for reference: qualitative
 #   This test reads anisotropy tensor field from vtu file a write it in the output.
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test10 - Steady flow with anisotropic conductivity
   mesh:
@@ -14,11 +14,10 @@ problem: !Coupling_Sequential
         regions:
           - 2d_fracture_1
           - 2d_fracture_2
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-07
-    n_schurs: 2
     input_fields:
       # creating the input field for anisotropy
       #- region: 3d_cube
@@ -42,7 +41,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x+y+z
+          value: X[0]+X[1]+X[2]
     output:
       fields:
         - pressure_p0

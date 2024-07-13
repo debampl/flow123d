@@ -22,7 +22,6 @@
 #include "system/system.hh"
 #include "system/index_types.hh"
 #include "fields/field_algo_base.hh"
-#include "fields/fe_value_handler.hh"
 #include "fields/field.hh"
 #include "la/vector_mpi.hh"
 #include "mesh/mesh.h"
@@ -36,6 +35,7 @@
 #include "fem/dofhandler.hh"
 #include "fem/finite_element.hh"
 #include "fem/dh_cell_accessor.hh"
+#include "fem/mapping_p1.hh"
 #include "input/factory.hh"
 
 #include <memory>
@@ -65,8 +65,18 @@ public:
 		interp_p0       //!< P0 interpolation (with the use of calculation of intersections)
 	};
 
+    /// Declaration of exception.
+    TYPEDEF_ERR_INFO( EI_Field, std::string);
+    TYPEDEF_ERR_INFO( EI_File, std::string);
     TYPEDEF_ERR_INFO( EI_ElemIdx, unsigned int);
+    TYPEDEF_ERR_INFO( EI_Region, std::string);
     DECLARE_EXCEPTION( ExcInvalidElemeDim, << "Dimension of element in target mesh must be 0, 1 or 2! elm.idx() = " << EI_ElemIdx::val << ".\n" );
+    DECLARE_INPUT_EXCEPTION( ExcUndefElementValue,
+            << "FieldFE " << EI_Field::qval << " on region " << EI_Region::qval << " have invalid value .\n"
+            << "Provided by file " << EI_File::qval << " at element ID " << EI_ElemIdx::val << ".\n"
+            << "Please specify in default_value key.\n");
+
+
 
     static const unsigned int undef_uint = -1;
 
@@ -122,17 +132,6 @@ public:
             unsigned int block_index = FieldFE<spacedim, Value>::undef_uint);
 
     /**
-     * Returns one value in one given point. ResultType can be used to avoid some costly calculation if the result is trivial.
-     */
-    virtual typename Value::return_type const &value(const Point &p, const ElementAccessor<spacedim> &elm);
-
-    /**
-     * Returns std::vector of scalar values in several points at once.
-     */
-    virtual void value_list (const Armor::array &point_list, const ElementAccessor<spacedim> &elm,
-                       std::vector<typename Value::return_type>  &value_list);
-
-    /**
      * Overload @p FieldAlgorithmBase::cache_update
      */
     void cache_update(FieldValueCache<typename Value::element_type> &data_cache,
@@ -160,7 +159,7 @@ public:
     /**
      * Set target mesh.
      */
-    void set_mesh(const Mesh *mesh, bool boundary_domain) override;
+    void set_mesh(const Mesh *mesh) override;
 
 
     /**
@@ -179,6 +178,10 @@ public:
     }
 
     inline VectorMPI& vec() {
+    	return data_vec_;
+    }
+
+    inline const VectorMPI& vec() const {
     	return data_vec_;
     }
 
@@ -202,30 +205,52 @@ private:
         unsigned int range_end_;
     };
 
+	/**
+	 * Helper class holds data of invalid values of all regions.
+	 *
+	 * If region contains invalid element value (typically 'not a number') is_invalid_ flag is set to true
+	 * and other information (element id an value) are stored. Check of invalid values is performed
+	 * during processing data of reader cache and possible exception is thrown only if FieldFE is defined
+	 * on appropriate region.
+	 *
+	 * Data of all regions are stored in vector of RegionValueErr instances.
+	 */
+    class RegionValueErr {
+    public:
+        /// Default constructor, sets valid region
+        RegionValueErr() : is_invalid_(false) {}
+
+        /// Constructor, sets invalid region, element and value specification
+        RegionValueErr(const std::string &region_name, unsigned int elm_id, double value) {
+            is_invalid_ = true;
+            region_name_ = region_name;
+            elm_id_ = elm_id;
+            value_ = value;
+        }
+
+        bool is_invalid_;
+        std::string region_name_;
+        unsigned int elm_id_;
+        double value_;
+    };
+
 	/// Create DofHandler object
-	void make_dof_handler(const Mesh *mesh);
+	void make_dof_handler(const MeshBase *mesh);
 
 	/// Interpolate data (use Gaussian distribution) over all elements of target mesh.
-	void interpolate_gauss(ElementDataCache<double>::ComponentDataPtr data_vec);
+	void interpolate_gauss();
 
 	/// Interpolate data (use intersection library) over all elements of target mesh.
-	void interpolate_intersection(ElementDataCache<double>::ComponentDataPtr data_vec);
+	void interpolate_intersection();
 
-	/// Calculate native data over all elements of target mesh.
-	void calculate_native_values(ElementDataCache<double>::ComponentDataPtr data_cache);
+//	/// Calculate native data over all elements of target mesh.
+//	void calculate_native_values(ElementDataCache<double>::CacheData data_cache);
+//
+//	/// Calculate data of equivalent_mesh interpolation on input over all elements of target mesh.
+//	void calculate_equivalent_values(ElementDataCache<double>::CacheData data_cache);
 
-	/// Calculate data of identict_mesh interpolation on input data over all elements of target mesh.
-	void calculate_identic_values(ElementDataCache<double>::ComponentDataPtr data_cache);
-
-	/// Calculate data of equivalent_mesh interpolation on input over all elements of target mesh.
-	void calculate_equivalent_values(ElementDataCache<double>::ComponentDataPtr data_cache);
-
-	/**
-	 * Fill data to boundary_dofs_ vector.
-	 *
-	 * TODO: Temporary solution. Fix problem with merge new DOF handler and boundary Mesh. Will be removed in future.
-	 */
-	void fill_boundary_dofs();
+	/// Calculate data of equivalent_mesh interpolation or native data on input over all elements of target mesh.
+	void calculate_element_values();
 
 	/// Initialize FEValues object of given dimension.
 	template <unsigned int dim>
@@ -246,7 +271,7 @@ private:
     template<unsigned int dim>
     void fill_fe_system_data(unsigned int block_index) {
         auto fe_system_ptr = std::dynamic_pointer_cast<FESystem<dim>>( dh_->ds()->fe()[Dim<dim>{}] );
-        ASSERT_DBG(fe_system_ptr != nullptr).error("Wrong type, must be FESystem!\n");
+        ASSERT(fe_system_ptr != nullptr).error("Wrong type, must be FESystem!\n");
         this->fe_item_[dim].comp_index_ = fe_system_ptr->function_space()->dof_indices()[block_index].component_offset;
         this->fe_item_[dim].range_begin_ = fe_system_ptr->fe_dofs(block_index)[0];
         this->fe_item_[dim].range_end_ = this->fe_item_[dim].range_begin_ + fe_system_ptr->fe()[block_index]->n_dofs();
@@ -260,20 +285,45 @@ private:
         this->fe_item_[dim].range_end_ = dh_->ds()->fe()[Dim<dim>{}]->n_dofs();
     }
 
+    /**
+     * Method computes value of given input cache element.
+     *
+     * If computed value is invalid (e.g. NaN value) sets the data specifying error value.
+     * @param i_cache_el Index of element of input ElementDataCache
+     * @param elm_idx Idx of element of computational mesh
+     * @param region_name Region of computational mesh
+     * @param actual_compute_region_error Data object holding data of region with invalid value.
+     */
+    double get_scaled_value(int i_cache_el, unsigned int elm_idx, const std::string &region_name, RegionValueErr &actual_compute_region_error);
 
-	/// DOF handler object
+    /**
+     * Helper method. Compute real coordinates and weights (use QGauss) of given element.
+     *
+     * Method is needs in Gauss interpolation.
+     */
+    template<int elemdim>
+    unsigned int compute_fe_quadrature(std::vector<arma::vec::fixed<3>> & q_points, std::vector<double> & q_weights,
+    		const ElementAccessor<spacedim> &elm, unsigned int order=3)
+    {
+        static_assert(elemdim <= spacedim, "Dimension of element must be less equal than spacedim.");
+    	static const double weight_coefs[] = { 1., 1., 2., 6. };
+
+    	QGauss qgauss(elemdim, order);
+    	arma::mat map_mat = MappingP1<elemdim,spacedim>::element_map(elm);
+
+    	for(unsigned i=0; i<qgauss.size(); ++i) {
+    		q_weights[i] = qgauss.weight(i)*weight_coefs[elemdim];
+    		q_points[i] = MappingP1<elemdim,spacedim>::project_unit_to_real(RefElement<elemdim>::local_to_bary(qgauss.point<elemdim>(i)), map_mat);
+    	}
+
+    	return qgauss.size();
+    }
+
+
+    /// DOF handler object
     std::shared_ptr<DOFHandlerMultiDim> dh_;
     /// Store data of Field
     VectorMPI data_vec_;
-
-    /// Value handler that allows get value of 0D elements.
-    FEValueHandler<0, spacedim, Value> value_handler0_;
-    /// Value handler that allows get value of 1D elements.
-    FEValueHandler<1, spacedim, Value> value_handler1_;
-    /// Value handler that allows get value of 2D elements.
-    FEValueHandler<2, spacedim, Value> value_handler2_;
-    /// Value handler that allows get value of 3D elements.
-    FEValueHandler<3, spacedim, Value> value_handler3_;
 
 	/// mesh reader file
 	FilePath reader_file_;
@@ -299,22 +349,21 @@ private:
     /// Is set in set_mesh method. Value true means, that we accept only boundary element accessors in the @p value method.
     bool boundary_domain_;
 
-    /**
-     * Hold dofs of boundary elements.
-     *
-     * TODO: Temporary solution. Fix problem with merge new DOF handler and boundary Mesh. Will be removed in future.
-     */
-    std::shared_ptr< std::vector<IntIdx> > boundary_dofs_;
-
     /// List of FEValues objects of dimensions 0,1,2,3 used for value calculation
     std::vector<FEValues<spacedim>> fe_values_;
 
-    /// Maps element indices between source (data) and target (computational) mesh if data interpolation is set to equivalent_msh
+    /// Maps element indices from computational mesh to the  source (data).
     std::shared_ptr<EquivalentMeshMap> source_target_mesh_elm_map_;
 
     /// Holds specific data of field evaluation over all dimensions.
     std::array<FEItem, 4> fe_item_;
     MixedPtr<FiniteElement> fe_;
+
+    /// Set holds data of valid / invalid element values on all regions
+    std::vector<RegionValueErr> region_value_err_;
+
+    /// Input ElementDataCache is stored in set_time and used in all evaluation and interpolation methods.
+    ElementDataCache<double>::CacheData input_data_cache_;
 
     /// Registrar of class to factory
     static const int registrar;

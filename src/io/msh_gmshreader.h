@@ -71,7 +71,7 @@ public:
     void read_physical_names(Mesh * mesh) override;
 
     /**
-     * Finds GMSH data header for ElementData given by time and field_name and stores it as \p actual_header_.
+     * Finds GMSH data header for ElementData given by time and field_name.
      */
     MeshDataHeader & find_header(HeaderQuery &header_query) override;
 
@@ -108,8 +108,7 @@ protected:
     /**
      * Implements @p BaseMeshReader::read_element_data.
      */
-    void read_element_data(ElementDataCacheBase &data_cache, MeshDataHeader actual_header, unsigned int n_components,
-    		bool boundary_domain) override;
+    void read_element_data(ElementDataCacheBase &data_cache, MeshDataHeader header) override;
 
 
     /// Table with data of ElementData headers

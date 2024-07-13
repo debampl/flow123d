@@ -46,6 +46,7 @@ TEST(PVDReader, read_pvd) {
     reader.test_find_header(0.05, 0.0, "offsets", OutputTime::DiscreteSpace::MESH_DEFINITION);
     reader.test_find_header(0.11, 0.1, "offsets", OutputTime::DiscreteSpace::MESH_DEFINITION);
     reader.test_find_header(0.21, 0.2, "offsets", OutputTime::DiscreteSpace::MESH_DEFINITION);
+    Profiler::uninitialize();
 }
 
 
@@ -71,8 +72,8 @@ TEST(PVDReader, get_element_data) {
 
     for (unsigned int i=0; i<3; ++i) {
     	BaseMeshReader::HeaderQuery header_params("scalar_field", i*0.1, OutputTime::DiscreteSpace::ELEM_DATA);
-    	ReaderCache::get_reader(mesh_file)->find_header(header_params);
-        typename ElementDataCache<double>::ComponentDataPtr scalar_data = ReaderCache::get_reader(mesh_file)->template get_element_data<double>(6, 1, false, 0);
+    	auto header = ReaderCache::get_reader(mesh_file)->find_header(header_params);
+        typename ElementDataCache<double>::CacheData scalar_data = ReaderCache::get_reader(mesh_file)->template get_element_data<double>(header, 6, 1, false);
         std::vector<double> &vec = *( scalar_data.get() );
         EXPECT_EQ(6, vec.size());
         for (unsigned int j=0; j<vec.size(); j++) {
@@ -82,12 +83,13 @@ TEST(PVDReader, get_element_data) {
 
     for (unsigned int i=0; i<3; ++i) {
     	BaseMeshReader::HeaderQuery header_params("vector_field", i*0.1, OutputTime::DiscreteSpace::ELEM_DATA);
-    	ReaderCache::get_reader(mesh_file)->find_header(header_params);
-        typename ElementDataCache<double>::ComponentDataPtr vector_data = ReaderCache::get_reader(mesh_file)->template get_element_data<double>(6, 3, false, 0);
+    	auto header = ReaderCache::get_reader(mesh_file)->find_header(header_params);
+        typename ElementDataCache<double>::CacheData vector_data = ReaderCache::get_reader(mesh_file)->template get_element_data<double>(header, 6, 3, false);
         std::vector<double> &vec = *( vector_data.get() );
         EXPECT_EQ(18, vec.size());
         for (unsigned int j=0; j<vec.size(); j++) {
         	EXPECT_DOUBLE_EQ( (i*2+1)*(j%3+1)*0.5, vec[j] );
         }
     }
+    Profiler::uninitialize();
 }

@@ -3,16 +3,15 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Parallel VTK output interpolated as D1_value (corner data). 
   mesh:
     mesh_file: ../00_mesh/cube_1x1x1_frac.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-07
-    n_schurs: 2
     input_fields:
       - region: 2d_fraction
         anisotropy: 1.0
@@ -37,7 +36,7 @@ problem: !Coupling_Sequential
       - region: .3d_cube
         bc_type: dirichlet
         bc_piezo_head: !FieldFormula
-          value: z
+          value: X[2]
           # p_3d
     output:
       fields:

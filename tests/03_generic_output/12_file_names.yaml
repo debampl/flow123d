@@ -3,18 +3,18 @@
 # Author: Jan Brezina
 # Source for reference: Just run
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Example 1 of real locality - column 1D model
   mesh:
     mesh_file: ../00_mesh/square_1x1_40el.msh
   # just trivial flow problem  
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     input_fields:
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x
+          value: X[0]
     nonlinear_solver:
       linear_solver: !Petsc
     # this should create, "flow.pvd file and flow directory"

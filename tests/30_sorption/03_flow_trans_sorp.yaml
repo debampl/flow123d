@@ -4,12 +4,12 @@
 #   - qualitative, check in Paraview
 #   - simple convective transport from right to left
 #   - compare different sorption types as they slow down the convection of liquid phase
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Sorption type comparison with simple 2D transport.
   mesh:
     mesh_file: ../00_mesh/rectangle_5x1.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-07
@@ -19,7 +19,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x
+          value: X[0]
     output:
       fields:
         - pressure_p0

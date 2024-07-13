@@ -18,6 +18,7 @@
 #include "fields/field_constant.hh"
 #include "fields/field_algo_base.impl.hh"
 #include "fields/field_instances.hh"	// for instantiation macros
+#include "fields/field_values.hh"
 #include "input/input_type.hh"
 #include "system/armor.hh"
 
@@ -30,12 +31,24 @@ FLOW123D_FORCE_LINK_IN_CHILD(field_constant)
 
 
 template <int spacedim, class Value>
+Input::Type::Array FieldConstant<spacedim, Value>::get_tensor_input_type() {
+	if (Value::NRows_ == Value::NCols_) {
+		// for square tensors allow initialization by diagonal vector, etc.
+		return it::Array( it::Array( it::Parameter("element_input_type"), 1), 1 );
+	}
+	else {
+		return it::Array( it::Array( it::Parameter("element_input_type"), Value::NCols_, Value::NCols_), Value::NRows_, Value::NRows_ );
+	}
+
+}
+
+template <int spacedim, class Value>
 const Input::Type::Record & FieldConstant<spacedim, Value>::get_input_type()
 {
     return it::Record("FieldConstant", FieldAlgorithmBase<spacedim,Value>::template_name()+" Field constant in space.")
         .derive_from(FieldAlgorithmBase<spacedim, Value>::get_input_type())
         .copy_keys(FieldAlgorithmBase<spacedim, Value>::get_field_algo_common_keys())
-        .declare_key("value", Value::get_input_type(), it::Default::obligatory(),
+        .declare_key("value", FieldConstant<spacedim, Value>::get_tensor_input_type(), it::Default::obligatory(),
                                     "Value of the constant field. "
                                     "For vector values, you can use scalar value to enter constant vector. "
                                     "For square (($N\\times N$))-matrix values, you can use: "
@@ -75,8 +88,7 @@ template <int spacedim, class Value>
 void FieldConstant<spacedim, Value>::init_from_input(const Input::Record &rec, const struct FieldAlgoBaseInitData& init_data) {
 	this->init_unit_conversion_coefficient(rec, init_data);
 
-
-    this->value_.init_from_input( rec.val<typename Value::AccessType>("value") );
+    this->value_.init_from_input( rec.val<Input::Array>("value") );
     this->value_.scale(this->unit_conversion_coefficient_);
     this->check_field_limits(rec, init_data);
 
@@ -109,38 +121,6 @@ void FieldConstant<spacedim, Value>::init_from_input(const Input::Record &rec, c
     this->field_result_ = result_constant;
 }
 
-
-
-/**
- * Returns one value in one given point. ResultType can be used to avoid some costly calculation if the result is trivial.
- */
-template <int spacedim, class Value>
-typename Value::return_type const & FieldConstant<spacedim, Value>::value(const Point &, const ElementAccessor<spacedim> &)
-{
-    return this->r_value_;
-}
-
-
-
-/**
- * Returns std::vector of scalar values in several points at once.
- */
-template <int spacedim, class Value>
-void FieldConstant<spacedim, Value>::value_list (const Armor::array &point_list, FMT_UNUSED const ElementAccessor<spacedim> &elm,
-                   std::vector<typename Value::return_type>  &value_list)
-{
-	OLD_ASSERT_EQUAL( point_list.size(), value_list.size() );
-    ASSERT_DBG(point_list.n_rows() == spacedim && point_list.n_cols() == 1).error("Invalid point size.\n");
-
-    for(unsigned int i=0; i< point_list.size(); i++) {
-    	OLD_ASSERT( Value(value_list[i]).n_rows()==this->value_.n_rows(),
-                "value_list[%d] has wrong number of rows: %d; should match number of components: %d\n",
-                i, Value(value_list[i]).n_rows(),this->value_.n_rows());
-
-
-        value_list[i]=this->r_value_;
-    }
-}
 
 
 template <int spacedim, class Value>

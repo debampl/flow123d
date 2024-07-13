@@ -56,7 +56,6 @@
 #include "tools/time_governor.hh"               // for TimeGovernor
 #include "la/vector_mpi.hh"                     // for VectorMPI
 
-#include "flow/darcy_flow_mh.hh"                // for DarcyMH::EqData
 
 class Balance;
 class DarcyFlowMHOutput;
@@ -65,6 +64,7 @@ class Intersection;
 class LinSys;
 // class LinSys_BDDC;
 class LocalSystem;
+class LocalConstraint;
 namespace Input {
 	class AbstractRecord;
 	class Record;
@@ -73,9 +73,10 @@ namespace Input {
 		class Selection;
 	}
 }
+template<unsigned int dim> class ReadInitCondAssemblyLMH;
+class GenericAssemblyBase;
+template< template<IntDim...> class DimAssembly> class GenericAssembly;
 
-template<int spacedim, class Value> class FieldAddPotential;
-template<int spacedim, class Value> class FieldDivide;
 
 /**
  * @brief Mixed-hybrid model of linear Darcy flow, possibly unsteady.
@@ -142,16 +143,103 @@ public:
     * This is common to all implementations since this provides interface
     * to this equation for possible coupling.
     * 
-    * This class is derived from DarcyMH::EqData especially due to the common output class DarcyFlowMHOutput.
-    * This is the only dependence between DarcyMH and DarcyLMH classes.
-    * It is also base class of RichardsLMH::EqData.
+    * This class uses the common output class DarcyFlowMHOutput.
+    * It is base class of RichardsLMH::EqFields.
     * */
-    class EqData : public DarcyMH::EqData {
+    class EqFields : public FieldSet {
+    public:
+        /**
+         * For compatibility with old BCD file we have to assign integer codes starting from 1.
+         */
+        enum BC_Type {
+            none=0,
+            dirichlet=1,
+            total_flux=4,
+            seepage=5,
+            river=6
+        };
+
+        /// Return a Selection corresponding to enum BC_Type.
+        static const Input::Type::Selection & get_bc_type_selection();
+
+        /// Creation of all fields.
+        EqFields();
+
+        /// Return coords field
+        FieldCoords &X() {
+            return this->X_;
+        }
+
+
+        Field<3, FieldValue<3>::TensorFixed > anisotropy;
+        Field<3, FieldValue<3>::Scalar > conductivity;
+        Field<3, FieldValue<3>::Scalar > cross_section;
+        Field<3, FieldValue<3>::Scalar > water_source_density;
+        Field<3, FieldValue<3>::Scalar > sigma;
+
+        BCField<3, FieldValue<3>::Enum > bc_type; // Discrete need Selection for initialization
+        BCField<3, FieldValue<3>::Scalar > bc_pressure;
+        BCField<3, FieldValue<3>::Scalar > bc_flux;
+        BCField<3, FieldValue<3>::Scalar > bc_robin_sigma;
+        BCField<3, FieldValue<3>::Scalar > bc_switch_pressure;
+
+        Field<3, FieldValue<3>::Scalar > init_pressure;
+        Field<3, FieldValue<3>::Scalar > storativity;
+        Field<3, FieldValue<3>::Scalar > extra_storativity; /// Externally added storativity.
+        Field<3, FieldValue<3>::Scalar > extra_source; /// Externally added water source.
+
+	    Field<3, FieldValue<3>::Scalar> field_ele_pressure;
+	    Field<3, FieldValue<3>::Scalar> field_ele_piezo_head;
+        Field<3, FieldValue<3>::VectorFixed > field_ele_velocity;
+        Field<3, FieldValue<3>::VectorFixed > flux;
+        Field<3, FieldValue<3>::Scalar> field_edge_pressure;
+
+        Field<3, FieldValue<3>::VectorFixed > gravity_field; /// Holds gravity vector acceptable in FieldModel
+        BCField<3, FieldValue<3>::VectorFixed > bc_gravity; /// Same as previous but used in boundary fields
+        Field<3, FieldValue<3>::Scalar> init_piezo_head;
+        BCField<3, FieldValue<3>::Scalar> bc_piezo_head;
+        BCField<3, FieldValue<3>::Scalar> bc_switch_piezo_head;
+
+        Field<3, FieldValue<3>::Scalar> ref_pressure; /// Precompute l2 difference outputs
+        Field<3, FieldValue<3>::VectorFixed> ref_velocity;
+        Field<3, FieldValue<3>::Scalar> ref_divergence;
+    };
+
+    class EqData {
     public:
         
         EqData();
         
+        void init();     ///< Initialize vectors, ...
+        void reset();    ///< Reset data members
+
+        /**
+         * Gravity vector and constant shift of pressure potential. Used to convert piezometric head
+         * to pressure head and vice versa.
+         */
+        arma::vec4 gravity_;
+        arma::vec3 gravity_vec_;
+
+        // Mirroring the following members of DarcyLMH:
+        Mesh *mesh;
+        std::shared_ptr<DOFHandlerMultiDim> dh_;         ///< full DOF handler represents DOFs of sides, elements and edges
+        std::shared_ptr<SubDOFHandlerMultiDim> dh_cr_;   ///< DOF handler represents DOFs of edges
+        std::shared_ptr<DOFHandlerMultiDim> dh_cr_disc_; ///< DOF handler represents DOFs of sides
         std::shared_ptr<SubDOFHandlerMultiDim> dh_p_;    ///< DOF handler represents DOFs of element pressure
+
+
+        uint water_balance_idx;
+
+        // TODO: check usage of MortarMethod in LMH
+        MortarMethod mortar_method_;
+
+        int is_linear;              ///< Hack fo BDDC solver.
+        bool force_no_neumann_bc;       ///< auxiliary flag for switchting Dirichlet like BC
+
+        /// Idicator of dirichlet or neumann type of switch boundary conditions.
+        std::vector<char> bc_switch_dirichlet;
+
+    	VectorMPI full_solution;     //< full solution [vel,press,lambda] from 2. Schur complement
         
         // Propagate test for the time term to the assembly.
         // This flag is necessary for switching BC to avoid setting zero neumann on the whole boundary in the steady case.
@@ -166,6 +254,31 @@ public:
         VectorMPI p_edge_solution_previous_time; //< 2. Schur complement previous solution (time)
 
         std::map<LongIdx, LocalSystem> seepage_bc_systems;
+
+        /// Shared Balance object
+    	std::shared_ptr<Balance> balance_;
+
+    	unsigned int nonlinear_iteration_; //< Actual number of completed nonlinear iterations, need to pass this information into assembly.
+
+    	/// Following data members are stored in vectors, one item for every cell.
+//        /** TODO: Investigate why the hell do we need this flag.
+//        *  If removed, it does not break any of the integration tests,
+//        * however it must influence the Dirichlet rows in matrix.
+//        */
+//        std::vector<unsigned int> dirichlet_edge;
+
+        std::vector<LocalSystem> loc_system_;
+        std::vector<LocalConstraint> loc_constraint_;
+        std::vector<arma::vec> postprocess_solution_;
+        std::array<std::vector<unsigned int>, 3> loc_side_dofs;
+        std::array<std::vector<unsigned int>, 3> loc_edge_dofs;
+        std::array<unsigned int, 3> loc_ele_dof;
+
+//        // std::shared_ptr<MortarAssemblyBase> mortar_assembly;
+
+        std::vector<bool> save_local_system_;       ///< Flag for saving the local system. Currently used only in case of seepage BC.
+        std::vector<bool> bc_fluxes_reconstruted;   ///< Flag indicating whether the fluxes for seepage BC has been reconstructed already.
+        std::array<unsigned int, 3> schur_offset_;  ///< Index offset in the local system for the Schur complement (of dim = 1,2,3).
     };
 
     /// Selection for enum MortarMethod.
@@ -194,16 +307,18 @@ public:
     virtual void postprocess();
     virtual void output_data() override;
 
+    virtual double solved_time() override;
 
-    EqData &data() { return *data_; }
+    inline EqFields &eq_fields() { return *eq_fields_; }
+    inline EqData &eq_data() { return *eq_data_; }
 
     /// Sets external storarivity field (coupling with other equation).
     void set_extra_storativity(const Field<3, FieldValue<3>::Scalar> &extra_stor)
-    { data_->extra_storativity = extra_stor; }
+    { eq_fields_->extra_storativity = extra_stor; }
 
     /// Sets external source field (coupling with other equation).
     void set_extra_source(const Field<3, FieldValue<3>::Scalar> &extra_src)
-    { data_->extra_source = extra_src; }
+    { eq_fields_->extra_source = extra_src; }
 
     virtual ~DarcyLMH() override;
 
@@ -232,14 +347,14 @@ protected:
      * For the LMH scheme we have to be able to save edge pressures in order to
      * restart simulation or use results of one simulation as initial condition for other one.
      */
-    void read_initial_condition();
+//    void read_initial_condition();
     
     /**
      * In some circumstances, the intial condition must be processed.
      * It is called at the end of @p read_initial_condition().
      * This is used in Richards equation due the update of water content.
      */
-    virtual void initial_condition_postprocess();
+//    virtual void initial_condition_postprocess();
     
     /**
      * Allocates linear system matrix for MH.
@@ -257,9 +372,9 @@ protected:
      * - add support for Robin type sources
      * - support for nonlinear solvers - assembly either residual vector, matrix, or both (using FADBAD++)
      */
-    void assembly_mh_matrix(MultidimAssembly& assembler);
+//    void assembly_mh_matrix(MultidimAssembly& assembler);
     
-    void reconstruct_solution_from_schur(MultidimAssembly& assembler);
+//    void reconstruct_solution_from_schur(MultidimAssembly& assembler);
 
     /**
      * Assembly or update whole linear system.
@@ -272,7 +387,7 @@ protected:
      * TODO: Introduce Equation::compute_residual() updating
      * residual field, standard part of EqData.
      */
-    virtual double solution_precision() const;
+//    virtual double solution_precision() const;
     
     /// Print darcy flow matrix in matlab format into a file.
     void print_matlab_matrix(string matlab_file);
@@ -282,7 +397,13 @@ protected:
 
     /// Getter for the linear system of the 2. Schur complement.
     LinSys& lin_sys_schur()
-    { return *(data_->lin_sys_schur); }
+    { return *(eq_data_->lin_sys_schur); }
+
+    /// Create and initialize assembly objects
+    virtual void initialize_asm();
+
+    /// Call assemble of read_init_cond_assembly_
+    virtual void read_init_cond_asm();
 
     std::shared_ptr<Balance> balance_;
 
@@ -296,17 +417,25 @@ protected:
 	double tolerance_;
 	unsigned int min_n_it_;
 	unsigned int max_n_it_;
-	unsigned int nonlinear_iteration_; //< Actual number of completed nonlinear iterations, need to pass this information into assembly.
 
-	std::shared_ptr<EqData> data_;
+	std::shared_ptr<EqFields> eq_fields_;
+	std::shared_ptr<EqData> eq_data_;
+
 
     friend class DarcyFlowMHOutput;
     //friend class P0_CouplingAssembler;
     //friend class P1_CouplingAssembler;
 
+    /// general assembly objects, hold assembly objects of appropriate dimension
+    GenericAssembly< ReadInitCondAssemblyLMH > * read_init_cond_assembly_;
+    GenericAssemblyBase * mh_matrix_assembly_;
+    GenericAssemblyBase * reconstruct_schur_assembly_;
 private:
-  /// Registrar of class to factory
-  static const int registrar;
+    /// Registrar of class to factory
+    static const int registrar;
+
+    static std::string equation_name()
+    { return "Flow_Darcy_LMH";}
 };
 
 #endif  //DARCY_FLOW_LMH_HH

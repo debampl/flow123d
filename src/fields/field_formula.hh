@@ -38,10 +38,9 @@
 #include "input/input_exception.hh"     // for ExcAssertMsg::~ExcAssertMsg
 #include "system/exceptions.hh"         // for ExcAssertMsg::~ExcAssertMsg
 #include "tools/time_governor.hh"       // for TimeStep
-#include "include/assert.hh"            // bparser
-#include "include/parser.hh"            // bparser
+//#include "include/assert.hh"            // bparser
+#include "parser.hh"            // bparser
 
-class FunctionParser;
 template <int spacedim> class ElementAccessor;
 class SurfaceDepth;
 
@@ -52,7 +51,6 @@ using namespace std;
  *
  * Using libraries:
  * https://github.com/flow123d/bparser/
- * http://warp.povusers.org/FunctionParser/ (gradually replaced by BParser)
  *
  * Allows parsing:
  * - base variables: coordinates (x,y,z), time (t), surface depth (d); constants: e, pi
@@ -67,21 +65,18 @@ public:
     typedef FieldAlgorithmBase<spacedim, Value> FactoryBaseType;
 
     TYPEDEF_ERR_INFO(EI_Field, std::string);
-    DECLARE_INPUT_EXCEPTION(ExcUnknownField,
-            << "Unknown field " << EI_Field::qval << " in the formula: \n");
-
     DECLARE_INPUT_EXCEPTION(ExcNotDoubleField,
             << "Can not use integer valued field " << EI_Field::qval << " in the formula: \n");
 
     TYPEDEF_ERR_INFO(EI_BParserMsg, std::string);
+    TYPEDEF_ERR_INFO(EI_Formula, std::string);
     DECLARE_INPUT_EXCEPTION(ExcParserError,
-            << "Parsing in " << EI_BParserMsg::val << " in the formula: \n");
+            << "Parsing in " << EI_BParserMsg::val << " in the formula: " << EI_Formula::qval << "\n");
 
     // Temporary exception of FParser. TODO remove at the same time as FParser
     TYPEDEF_ERR_INFO(EI_FParserMsg, std::string);
     TYPEDEF_ERR_INFO(EI_Row, unsigned int);
     TYPEDEF_ERR_INFO(EI_Col, unsigned int);
-    TYPEDEF_ERR_INFO(EI_Formula, std::string);
     DECLARE_INPUT_EXCEPTION(ExcFParserError,
             << "ParserError: " << EI_FParserMsg::val << "\n in the FieldFormula[" << EI_Row::val
 			<< "][" << EI_Row::val << "] == " << EI_Formula::qval << " \n");
@@ -103,18 +98,7 @@ public:
      *
      * See also description of the FieldBase<...>::set_mesh.
      */
-    void set_mesh(const Mesh *mesh, bool boundary_domain) override;
-
-    /**
-     * Returns one value in one given point. ResultType can be used to avoid some costly calculation if the result is trivial.
-     */
-    virtual typename Value::return_type const &value(const Point &p, const ElementAccessor<spacedim> &elm);
-
-    /**
-     * Returns std::vector of scalar values in several points at once.
-     */
-    virtual void value_list (const Armor::array &point_list, const ElementAccessor<spacedim> &elm,
-                       std::vector<typename Value::return_type>  &value_list);
+    void set_mesh(const Mesh *mesh) override;
 
     void cache_update(FieldValueCache<typename Value::element_type> &data_cache,
 			ElementCacheMap &cache_map, unsigned int region_patch_idx) override;
@@ -134,8 +118,6 @@ public:
     virtual ~FieldFormula();
 
 private:
-    typedef StringTensorInput<Value::NRows_,Value::NCols_> STI;
-
     /**
      * Evaluate depth variable if it is contained in formula.
      *
@@ -143,12 +125,11 @@ private:
      */
     inline arma::vec eval_depth_var(const Point &p);
 
-    // StringValue::return_type == StringTensor, which behaves like arma::mat<string>
-    StringTensor formula_matrix_;
+    // formula expression, string is set to BParser
+    std::string formula_;
 
-    // Matrix of parsers corresponding to the formula matrix returned by formula_matrix_helper_
-    std::vector< std::vector<FunctionParser> > parser_matrix_;
-    std::vector< bparser::Parser > b_parser_;
+    // Parser evaluating scalar, vector or tensor expression returned by formula_ string.
+    bparser::Parser b_parser_;
 
     /// Accessor to Input::Record
     Input::Record in_rec_;
@@ -165,13 +146,11 @@ private:
     /// Helper variable for construct of arena, holds sum of sizes (over shape) of all dependent fields.
     uint sum_shape_sizes_;
 
-    /// Flag indicates first call of set_time method, when FunctionParsers in parser_matrix_ must be initialized
-    bool first_time_set_;
-
     /// Arena object providing data arrays
     bparser::ArenaAlloc * arena_alloc_;
 
     // BParser data arrays and variables
+	double *X_;       ///< Coordinates vector
 	double *x_;       ///< Coordinates x, part of previous array
 	double *y_;       ///< Coordinates y, part of previous array
 	double *z_;       ///< Coordinates z, part of previous array

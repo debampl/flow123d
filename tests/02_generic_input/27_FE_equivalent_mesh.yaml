@@ -3,12 +3,12 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test different order and number of elements in source (input data) and target (computational) mesh
   mesh:
     mesh_file: ../00_mesh/rectangle_6_el.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         r_tol: 1.0e-12
@@ -24,8 +24,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: 0.1*x
-    n_schurs: 2
+          value: 0.1*X[0]
     output:
       fields:
         - pressure_p0

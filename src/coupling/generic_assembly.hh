@@ -23,12 +23,13 @@
 #include "fields/eval_points.hh"
 #include "fields/field_value_cache.hh"
 #include "tools/revertable_list.hh"
+#include "system/sys_profiler.hh"
 
 
 
 /// Allow set mask of active integrals.
 enum ActiveIntegrals {
-    none     =      0,
+    no_intg  =      0,
     bulk     = 0x0001,
     edge     = 0x0002,
     coupling = 0x0004,
@@ -51,25 +52,6 @@ struct AssemblyIntegrals {
 class GenericAssemblyBase
 {
 public:
-    GenericAssemblyBase(){}
-    virtual ~GenericAssemblyBase(){}
-    virtual void assemble(std::shared_ptr<DOFHandlerMultiDim> dh) = 0;
-};
-
-
-/**
- * @brief Generic class of assemblation.
- *
- * Class
- *  - holds assemblation structures (EvalPoints, Integral objects, Integral data table).
- *  - associates assemblation objects specified by dimension
- *  - provides general assemble method
- *  - provides methods that allow construction of element patches
- */
-template < template<IntDim...> class DimAssembly>
-class GenericAssembly : public GenericAssemblyBase
-{
-private:
 	/**
 	 * Helper structzre holds data of cell (bulk) integral
 	 *
@@ -159,11 +141,39 @@ private:
 	    unsigned int side_subset_index;    ///< Index (order) of subset on side of bulk element in EvalPoints object
 	};
 
-public:
+    GenericAssemblyBase(){}
+    virtual ~GenericAssemblyBase(){}
+    virtual void assemble(std::shared_ptr<DOFHandlerMultiDim> dh) = 0;
 
+    /// Getter to EvalPoints object
+    inline std::shared_ptr<EvalPoints> eval_points() const {
+        return eval_points_;
+    }
+
+protected:
+    AssemblyIntegrals integrals_;                                 ///< Holds integral objects.
+    std::shared_ptr<EvalPoints> eval_points_;                     ///< EvalPoints object shared by all integrals
+    ElementCacheMap element_cache_map_;                           ///< ElementCacheMap according to EvalPoints
+};
+
+
+/**
+ * @brief Generic class of assemblation.
+ *
+ * Class
+ *  - holds assemblation structures (EvalPoints, Integral objects, Integral data table).
+ *  - associates assemblation objects specified by dimension
+ *  - provides general assemble method
+ *  - provides methods that allow construction of element patches
+ */
+template < template<IntDim...> class DimAssembly>
+class GenericAssembly : public GenericAssemblyBase
+{
+public:
     /// Constructor
     GenericAssembly( typename DimAssembly<1>::EqFields *eq_fields, typename DimAssembly<1>::EqData *eq_data)
     : multidim_assembly_(eq_fields, eq_data),
+	  min_edge_sides_(2),
 	  bulk_integral_data_(20, 10),
 	  edge_integral_data_(12, 6),
 	  coupling_integral_data_(12, 6),
@@ -186,9 +196,8 @@ public:
         return multidim_assembly_;
     }
 
-    /// Geter to EvalPoints object
-    inline std::shared_ptr<EvalPoints> eval_points() const {
-        return eval_points_;
+    void set_min_edge_sides(unsigned int val) {
+        min_edge_sides_ = val;
     }
 
 	/**
@@ -196,6 +205,11 @@ public:
 	 *
 	 * Loops through local cells and calls assemble methods of assembly
 	 * object of each cells over space dimension.
+	 *
+	 * TODO:
+	 * - make estimate of the cache fill for combination of (integral_type x element dimension)
+	 * - add next cell to patch if current_patch_size + next_element_size <= fixed_cache_size
+	 * - avoid reverting the integral data lists.
 	 */
     void assemble(std::shared_ptr<DOFHandlerMultiDim> dh) override {
         START_TIMER( DimAssembly<1>::name() );
@@ -211,11 +225,11 @@ public:
         	    add_into_patch = true;
             }
 
-            //START_TIMER("add_integrals_to_patch");
+            START_TIMER("add_integrals_to_patch");
             this->add_integrals_of_computing_step(*cell_it);
-            //END_TIMER("add_integrals_to_patch");
+            END_TIMER("add_integrals_to_patch");
 
-            if (element_cache_map_.eval_point_data_.temporary_size() > CacheMapElementNumber::get()) {
+            if (element_cache_map_.get_simd_rounded_size() > CacheMapElementNumber::get()) {
                 bulk_integral_data_.revert_temporary();
                 edge_integral_data_.revert_temporary();
                 coupling_integral_data_.revert_temporary();
@@ -229,7 +243,7 @@ public:
                 coupling_integral_data_.make_permanent();
                 boundary_integral_data_.make_permanent();
                 element_cache_map_.eval_point_data_.make_permanent();
-                if (element_cache_map_.eval_point_data_.temporary_size() == CacheMapElementNumber::get()) {
+                if (element_cache_map_.get_simd_rounded_size() == CacheMapElementNumber::get()) {
                     this->assemble_integrals();
                     add_into_patch = false;
                 }
@@ -250,49 +264,6 @@ public:
     }
 
 private:
-    /// Assembles the cell integrals for the given dimension.
-    template<unsigned int dim>
-    inline void assemble_cell_integrals() {
-    	for (unsigned int i=0; i<bulk_integral_data_.permanent_size(); ++i) {
-            if (bulk_integral_data_[i].cell.dim() != dim) continue;
-            multidim_assembly_[Dim<dim>{}]->cell_integral(bulk_integral_data_[i].cell, element_cache_map_.position_in_cache(bulk_integral_data_[i].cell.elm().mesh_idx()));
-    	}
-    	// Possibly optimization but not so fast as we would assume (needs change interface of cell_integral)
-        /*for (unsigned int i=0; i<element_cache_map_.n_elements(); ++i) {
-            unsigned int elm_start = element_cache_map_.element_chunk_begin(i);
-            if (element_cache_map_.eval_point_data(elm_start).i_eval_point_ != 0) continue;
-            multidim_assembly_[Dim<dim>{}]->cell_integral(i, element_cache_map_.eval_point_data(elm_start).dh_loc_idx_);
-        }*/
-    }
-
-    /// Assembles the boundary side integrals for the given dimension.
-    template<unsigned int dim>
-    inline void assemble_boundary_side_integrals() {
-        for (unsigned int i=0; i<boundary_integral_data_.permanent_size(); ++i) {
-            if (boundary_integral_data_[i].side.dim() != dim) continue;
-            multidim_assembly_[Dim<dim>{}]->boundary_side_integral(boundary_integral_data_[i].side);
-        }
-    }
-
-    /// Assembles the edge integrals for the given dimension.
-    template<unsigned int dim>
-    inline void assemble_edge_integrals() {
-        for (unsigned int i=0; i<edge_integral_data_.permanent_size(); ++i) {
-        	auto range = edge_integral_data_[i].edge_side_range;
-            if (range.begin()->dim() != dim) continue;
-            multidim_assembly_[Dim<dim>{}]->edge_integral(edge_integral_data_[i].edge_side_range);
-        }
-    }
-
-    /// Assembles the neighbours integrals for the given dimension.
-    template<unsigned int dim>
-    inline void assemble_neighbour_integrals() {
-        for (unsigned int i=0; i<coupling_integral_data_.permanent_size(); ++i) {
-            if (coupling_integral_data_[i].side.dim() != dim) continue;
-            multidim_assembly_[Dim<dim>{}]->dimjoin_intergral(coupling_integral_data_[i].cell, coupling_integral_data_[i].side);
-        }
-    }
-
     /// Call assemblations when patch is filled
     void assemble_integrals() {
         START_TIMER("create_patch");
@@ -305,32 +276,32 @@ private:
 
         {
             START_TIMER("assemble_volume_integrals");
-            this->assemble_cell_integrals<1>();
-            this->assemble_cell_integrals<2>();
-            this->assemble_cell_integrals<3>();
+            multidim_assembly_[1_d]->assemble_cell_integrals(bulk_integral_data_);
+            multidim_assembly_[2_d]->assemble_cell_integrals(bulk_integral_data_);
+            multidim_assembly_[3_d]->assemble_cell_integrals(bulk_integral_data_);
             END_TIMER("assemble_volume_integrals");
         }
 
         {
             START_TIMER("assemble_fluxes_boundary");
-            this->assemble_boundary_side_integrals<1>();
-            this->assemble_boundary_side_integrals<2>();
-            this->assemble_boundary_side_integrals<3>();
+            multidim_assembly_[1_d]->assemble_boundary_side_integrals(boundary_integral_data_);
+            multidim_assembly_[2_d]->assemble_boundary_side_integrals(boundary_integral_data_);
+            multidim_assembly_[3_d]->assemble_boundary_side_integrals(boundary_integral_data_);
             END_TIMER("assemble_fluxes_boundary");
         }
 
         {
             START_TIMER("assemble_fluxes_elem_elem");
-            this->assemble_edge_integrals<1>();
-            this->assemble_edge_integrals<2>();
-            this->assemble_edge_integrals<3>();
+            multidim_assembly_[1_d]->assemble_edge_integrals(edge_integral_data_);
+            multidim_assembly_[2_d]->assemble_edge_integrals(edge_integral_data_);
+            multidim_assembly_[3_d]->assemble_edge_integrals(edge_integral_data_);
             END_TIMER("assemble_fluxes_elem_elem");
         }
 
         {
             START_TIMER("assemble_fluxes_elem_side");
-            this->assemble_neighbour_integrals<2>();
-            this->assemble_neighbour_integrals<3>();
+            multidim_assembly_[2_d]->assemble_neighbour_integrals(coupling_integral_data_);
+            multidim_assembly_[3_d]->assemble_neighbour_integrals(coupling_integral_data_);
             END_TIMER("assemble_fluxes_elem_side");
         }
         // clean integral data
@@ -360,7 +331,7 @@ private:
                         continue;
                     }
             if (active_integrals_ & ActiveIntegrals::edge)
-                if ( (cell_side.n_edge_sides() >= 2) && (cell_side.edge_sides().begin()->element().idx() == cell.elm_idx())) {
+                if ( (cell_side.n_edge_sides() >= min_edge_sides_) && (cell_side.edge_sides().begin()->element().idx() == cell.elm_idx())) {
                     this->add_edge_integral(cell_side);
                 }
         }
@@ -385,7 +356,7 @@ private:
         // because it passes element_patch_idx as argument that is not known during patch construction.
         for (uint i=uint( eval_points_->subset_begin(cell.dim(), subset_idx) );
                   i<uint( eval_points_->subset_end(cell.dim(), subset_idx) ); ++i) {
-            element_cache_map_.eval_point_data_.emplace_back(reg_idx, cell.elm_idx(), i, cell.local_idx());
+            element_cache_map_.add_eval_point(reg_idx, cell.elm_idx(), i, cell.local_idx());
         }
     }
 
@@ -397,7 +368,7 @@ private:
         for( DHCellSide edge_side : range ) {
             unsigned int reg_idx = edge_side.element().region_idx().idx();
             for (auto p : integrals_.edge_[range.begin()->dim()-1]->points(edge_side, &element_cache_map_) ) {
-                element_cache_map_.eval_point_data_.emplace_back(reg_idx, edge_side.elem_idx(), p.eval_point_idx(), edge_side.cell().local_idx());
+                element_cache_map_.add_eval_point(reg_idx, edge_side.elem_idx(), p.eval_point_idx(), edge_side.cell().local_idx());
             }
         }
     }
@@ -410,11 +381,11 @@ private:
         unsigned int reg_idx_low = cell.elm().region_idx().idx();
         unsigned int reg_idx_high = ngh_side.element().region_idx().idx();
         for (auto p : integrals_.coupling_[cell.dim()-1]->points(ngh_side, &element_cache_map_) ) {
-            element_cache_map_.eval_point_data_.emplace_back(reg_idx_high, ngh_side.elem_idx(), p.eval_point_idx(), ngh_side.cell().local_idx());
+            element_cache_map_.add_eval_point(reg_idx_high, ngh_side.elem_idx(), p.eval_point_idx(), ngh_side.cell().local_idx());
 
         	if (add_low) {
                 auto p_low = p.lower_dim(cell); // equivalent point on low dim cell
-                element_cache_map_.eval_point_data_.emplace_back(reg_idx_low, cell.elm_idx(), p_low.eval_point_idx(), cell.local_idx());
+                element_cache_map_.add_eval_point(reg_idx_low, cell.elm_idx(), p_low.eval_point_idx(), cell.local_idx());
         	}
         }
     }
@@ -426,12 +397,12 @@ private:
 
         unsigned int reg_idx = bdr_side.element().region_idx().idx();
         for (auto p : integrals_.boundary_[bdr_side.dim()-1]->points(bdr_side, &element_cache_map_) ) {
-            element_cache_map_.eval_point_data_.emplace_back(reg_idx, bdr_side.elem_idx(), p.eval_point_idx(), bdr_side.cell().local_idx());
+            element_cache_map_.add_eval_point(reg_idx, bdr_side.elem_idx(), p.eval_point_idx(), bdr_side.cell().local_idx());
 
         	BulkPoint p_bdr = p.point_bdr(bdr_side.cond().element_accessor()); // equivalent point on boundary element
         	unsigned int bdr_reg = bdr_side.cond().element_accessor().region_idx().idx();
         	// invalid local_idx value, DHCellAccessor of boundary element doesn't exist
-        	element_cache_map_.eval_point_data_.emplace_back(bdr_reg, bdr_side.cond().bc_ele_idx(), p_bdr.eval_point_idx(), -1);
+        	element_cache_map_.add_eval_point(bdr_reg, bdr_side.cond().bc_ele_idx(), p_bdr.eval_point_idx(), -1);
         }
     }
 
@@ -448,9 +419,13 @@ private:
     /// Holds mask of active integrals.
     int active_integrals_;
 
-    AssemblyIntegrals integrals_;                                 ///< Holds integral objects.
-    std::shared_ptr<EvalPoints> eval_points_;                     ///< EvalPoints object shared by all integrals
-    ElementCacheMap element_cache_map_;                           ///< ElementCacheMap according to EvalPoints
+    /**
+     * Minimal number of sides on edge.
+     *
+     * Edge integral is created and calculated if number of sides is greater or equal than this value. Default value
+     * is 2 and can be changed
+     */
+    unsigned int min_edge_sides_;
 
     // Following variables hold data of all integrals depending of actual computed element.
     // TODO sizes of arrays should be set dynamically, depend on number of elements in ElementCacheMap,

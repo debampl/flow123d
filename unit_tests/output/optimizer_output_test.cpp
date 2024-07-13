@@ -30,7 +30,6 @@
 #include "fem/fe_p.hh"
 #include "fields/field_fe.hh"
 #include "la/vector_mpi.hh"
-#include "fields/fe_value_handler.hh"
 #include "tools/mixed.hh"
 
 FLOW123D_FORCE_LINK_IN_PARENT(field_constant)
@@ -42,12 +41,24 @@ format: !vtk
 )YAML";
 
 
+class TestVTK : public testing::Test {
+protected:
+	TestVTK()
+    {
+        Profiler::instance();
+    }
+
+    ~TestVTK()
+    {
+        Profiler::uninitialize();
+    }
+};
+
 class TestOutputVTK : public OutputVTK {
 public:
     TestOutputVTK()
     : OutputVTK()
     {
-        Profiler::instance();
         LoggerOptions::get_instance().set_log_file("");
 
         FilePath mesh_file( string(UNIT_TESTS_SRC_DIR) + "/../tests/00_mesh/square_1x1_frac_fork.msh", FilePath::input_file);
@@ -82,7 +93,7 @@ public:
         		(unsigned int)1, (unsigned int)1);
 
         auto output_data = std::dynamic_pointer_cast<ElementDataCache<unsigned int>>(output_data_base);
-        auto &data_vec = *( output_data->get_component_data(0).get() );
+        auto &data_vec = *( output_data->get_data().get() );
         for (uint i=0; i<data_vec.size(); ++i) {
             data_vec[i] = i;
         }
@@ -113,7 +124,7 @@ public:
 };
 
 
-TEST(TestOutputVTK, hilbert) {
+TEST_F(TestVTK, hilbert) {
     std::shared_ptr<TestOutputVTK> output_vtk = std::make_shared<TestOutputVTK>();
 
     output_vtk->init_mesh(test_output_time);

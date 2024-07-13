@@ -3,13 +3,13 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Check correct time unit conversion of global time declaration in time governor in input YAML file.
   mesh:
     mesh_file: ../00_mesh/prism_11el.msh
     global_snap_radius: 0.1
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-12
@@ -42,8 +42,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: 0.1*x
-    n_schurs: 2
+          value: 0.1*X[0]
     output:
       times:
         - 0.0
@@ -52,7 +51,6 @@ problem: !Coupling_Sequential
         - 0.75
       fields:
         - pressure_p0
-        - pressure_p1
         - velocity_p0
         - conductivity
         - cross_section

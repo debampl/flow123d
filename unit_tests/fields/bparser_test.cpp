@@ -11,8 +11,8 @@
 
 #include <flow_gtest.hh>
 #include <string>
-#include "include/assert.hh"
-#include "include/parser.hh"
+#include "assert.hh"
+#include "parser.hh"
 
 
 TEST(BParser, all) {
@@ -34,7 +34,7 @@ TEST(BParser, all) {
 	Parser p(vec_size);
 	p.parse("1 * x + cs1 * y + x * z");
 
-	std::cout << "Variables: " << print_vector(p.variables()) << "\n";
+	std::cout << "Variables: " << print_vector(p.free_symbols()) << "\n";
 
 	// Set constants and variables
 	// "cs1" constant with shape {}, i.e. scalar and values {2}.
@@ -54,7 +54,12 @@ TEST(BParser, all) {
 	p.compile();
 	// Set arbitrary subset of the SIMD blocks in the maximal values space.
 	// Here the full subset.
-	p.set_subset({0, 1, 2, 3, 4, 5});
+	uint simd_size = bparser::get_simd_size();
+	std::vector<uint> ss = std::vector<uint>(vec_size/simd_size);
+	for (uint i = 0; i < vec_size/simd_size; i++){
+		ss[i] = i;
+	}
+	p.set_subset(ss);
 	// Evaluate
 	p.run();
 	// Result in the 'vres' value space.

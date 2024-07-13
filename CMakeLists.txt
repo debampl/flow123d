@@ -14,6 +14,7 @@
 # since CMakeList.txt can be called by generated makefiles.
 execute_process(COMMAND bin/git_post_checkout_hook WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+cmake_policy(VERSION 3.16)
 
 
 # Include settings given by user first
@@ -91,6 +92,8 @@ project(Flow123d CXX C Fortran)
 # CMake version required for pre-build this project
 cmake_minimum_required(VERSION 2.8.8)
     
+set(CMAKE_C_DEPENDS_USE_COMPILER ON)
+
 cmake_policy(SET CMP0017 NEW)
 if (${CMAKE_VERSION} VERSION_GREATER 3.0)
     cmake_policy(SET CMP0037 OLD)
@@ -131,11 +134,20 @@ include (Flow123d_config_header)
 message(STATUS "Using build type: ${FLOW_BUILD_TYPE}")
 if(FLOW_BUILD_TYPE STREQUAL "debug")
   # debug mode
-  set(CMAKE_CXX_FLAGS "-g -O0")
-  set(CMAKE_C_FLAGS "-g -O0")
+  # Use of fvisibility=hidden flag is necessary for correct compilation of Pybind11 included headers
+  # (see https://pybind11.readthedocs.io/en/stable/faq.html).
+  # set(CMAKE_CXX_FLAGS "-g -O0 -fsanitize=address -static-libasan -fno-omit-frame-pointer")
+  # set(CMAKE_C_FLAGS "-g -O0 -fsanitize=address -static-libasan -fno-omit-frame-pointer")
+  set(CMAKE_CXX_FLAGS "-g -O0 -fno-omit-frame-pointer -fvisibility=hidden")
+  set(CMAKE_C_FLAGS "-g -O0 -fno-omit-frame-pointer -fvisibility=hidden")
   set(CMAKE_EXE_LINKER_FLAGS "-g ")
   set(CMAKE_BUILD_TYPE Debug)
-  flow_define(DEBUG)
+  
+  # Turn off profiler data for debug builds as it is useless anyway and PROFILER new/delete operators are in conflict with
+  # memory sanitizers.
+  flow_define(DEBUG_MESSAGES)
+  flow_define(DEBUG_ASSERTS)
+  #flow_define(DEBUG)
 elseif(FLOW_BUILD_TYPE STREQUAL "release")
   # Release mode
   set(CMAKE_CXX_FLAGS "-O3 -DNDEBUG" )
@@ -145,13 +157,15 @@ elseif(FLOW_BUILD_TYPE STREQUAL "release")
   add_definitions(-DARMA_NO_DEBUG)    # no bound checks in armadillo 
   flow_define(DEBUG_PROFILER)
   flow_define(BENCHMARK_ASSERTS)    # check time for benchmark unit tests
-elseif(FLOW_BUILD_TYPE STREQUAL "release_with_debug")
-  # Release mode with debug info 
-  set(CMAKE_CXX_FLAGS "-O3 -g")
-  set(CMAKE_C_FLAGS "-O3 -g")
-  set(CMAKE_BUILD_TYPE Debug)
-  flow_define(DEBUG)
-  flow_define(BENCHMARK_ASSERTS)
+elseif(FLOW_BUILD_TYPE STREQUAL "release-dbg")
+  # Release mode with debug info, namely for profilling 
+  set(CMAKE_CXX_FLAGS "-g -O3 -DNDEBUG" )
+  set(CMAKE_C_FLAGS "-g -O3 -DNDEBUG")
+  set(CMAKE_BUILD_TYPE Release)
+  # armadillo is configured using this definition
+  add_definitions(-DARMA_NO_DEBUG)    # no bound checks in armadillo 
+  flow_define(DEBUG_PROFILER)
+  flow_define(BENCHMARK_ASSERTS)    # check time for benchmark unit tests
 elseif(FLOW_BUILD_TYPE STREQUAL "coverage")
   # Coverage mode creates instrumented binary
   SET(CMAKE_CXX_FLAGS "-g -O0 --coverage")
@@ -170,6 +184,8 @@ elseif(FLOW_BUILD_TYPE STREQUAL "coverage")
 else()
 endif()
 
+set(FLOW_CC_FLAGS  "${FLOW_CC_FLAGS} -fPIC")
+
 if(FLOW_CC_FLAGS)
   # user given flags overrides everything  
   message(STATUS "Using user specified compiler options: ${FLOW_CC_FLAGS}")
@@ -184,27 +200,33 @@ set(CMAKE_C_FLAGS_${CMAKE_BUILD_TYPE} "")
 set(CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE} "")
 set(CMAKE_FORTRAN_FLAGS_${CMAKE_BUILD_TYPE} "")
 
-# Compiler-specific C++14 activation.
-set(CMAKE_CXX_STANDARD 14)
+# Compiler-specific C++17 activation. Necessary for BParser and VCL2.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
       # -Wvla - variable length arrays
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pedantic -Wall -Wextra -Werror \
--Wno-catch-value -Wno-deprecated-copy -Wno-misleading-indentation -Wno-implicit-fallthrough \
--Wno-vla -Wno-unused-local-typedefs -Wno-deprecated-declarations")
 
-## Compiler-specific C++11 activation.
-## It was replaced in commit a66193035 with C++14 specification.
-## Needs special definition of trigonometric functions held in the comment below:
-# if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")        
-#     ...
-#     # Necessary for FParser - TODO: move to better place
-#     # ?? what about Clang
-#     flow_define(HAVE_SINCOS)
-# else()
-#     ...
-# endif()
+message(STATUS "COMPILER ID: ${CMAKE_CXX_COMPILER_ID}")
+if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")        
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pedantic -Wall -Wextra -Werror \
+    -Wno-catch-value -Wno-deprecated-copy -Wno-misleading-indentation -Wno-implicit-fallthrough \
+    -Wno-vla -Wno-unused-local-typedefs -Wno-deprecated-declarations")
+elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "CLang")
+    # TODO: CLang support in BParser
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pedantic -Wall -Wextra -Werror \
+    -Wno-enum-compare-switch -Wno-undefined-bool-conversion -Wno-dangling-field")
+    #-Wno-catch-value -Wno-deprecated-copy -Wno-misleading-indentation -Wno-implicit-fallthrough \
+    #-Wno-vla -Wno-unused-local-typedefs -Wno-deprecated-declarations")
+elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Intel")
+    # TODO: Update JSON library to submodule
+    # TODO: CLang support in BParser
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pedantic -Wall -Wextra -Werror \
+    ")
+    #-Wno-catch-value -Wno-deprecated-copy -Wno-misleading-indentation -Wno-implicit-fallthrough \
+    #-Wno-vla -Wno-unused-local-typedefs -Wno-deprecated-declarations")
+
+endif()
 
 # set encoding of VTU output files to Little Endian, VTU files can be encoded in Little Endian or Big Endian format  
 flow_define(LITTLE_ENDIAN true)
@@ -290,7 +312,7 @@ flow_define(COMPILER_FLAGS_ ${CMAKE_CXX_FLAGS})
 flow_define(SOURCE_DIR ${CMAKE_SOURCE_DIR})
 
 set(JSON_BuildTests OFF CACHE INTERNAL "")
-add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/json-3.7.1")
+add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/json-3.10.5")
 
 ######################################################################### find libraries
 #
@@ -344,12 +366,12 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/json-3.7.1")
 message(STATUS "=======================================================")
 message(STATUS "====== BOOST ==========================================")
 message(STATUS "=======================================================")
-set(Boost_USE_STATIC_LIBS       ON)
+#set(Boost_USE_STATIC_LIBS       ON)
 set(Boost_USE_MULTITHREADED     OFF)
 set(Boost_USE_STATIC_RUNTIME    OFF)
 set(EXTERNAL_BOOST_DIR  "${EXTERNAL_PROJECT_DIR}/boost_build")  
 #set(REQUIRED_Boost_COMPONENTS program_options serialization regex filesystem system)
-set(REQUIRED_Boost_COMPONENTS program_options filesystem) 
+set(REQUIRED_Boost_COMPONENTS program_options filesystem regex) 
  
 # set(Boost_DEBUG TRUE)
 # For some mysterious reason, the second find_package fails to find
@@ -437,7 +459,7 @@ include (FindPackageMultipass)
 
 # this export list is for possible BDDCML installation
 set(PETSC_EXPORT_LIST 
-  MPIFC_SHOW MPICXX_SHOW MPICC_SHOW CC FC CC_FLAGS PCC_FLAGS FC_FLAGS CPP_FLAGS
+  MPIEXEC MPICXX_INCLUDES MPIFC_SHOW MPICXX_SHOW MPICC_SHOW CC FC CC_FLAGS PCC_FLAGS FC_FLAGS CPP_FLAGS
   METIS_INCLUDE BLASLAPACK_INCLUDE PARMETIS_INCLUDE MUMPS_INCLUDE
   MPI_LIB MUMPS_LIB  METIS_LIB PARMETIS_LIB BLASLAPACK_LIB SCALAPACK_LIB
   UMFPACK_LIB)  
@@ -446,6 +468,13 @@ message(STATUS "PETSC_DIR = ${PETSC_DIR}")
 message(STATUS "PETSC_ARCH = ${PETSC_ARCH}")
 
 find_package(PETSc 3.6.0 REQUIRED)
+#set(MPI_DIR ${PETSC_MPIEXEC})
+string(REGEX REPLACE "/bin/mpiexec$" "" MPI_HOME ${PETSC_MPIEXEC})
+
+# Find MPI package using the extracted MPI directory
+message(STATUS "MPI_HOME: ${MPI_HOME}")
+find_package(MPI REQUIRED)
+
 flow_define(HAVE_PETSC)
 flow_define(HAVE_MPI)
 
@@ -458,22 +487,6 @@ message(STATUS "PETSC_LIBS = ${PETSC_LIBRARIES}")
 message(STATUS "PETSC_EXTERNAL_LIB = ${PETSC_EXTERNAL_LIB}")
 message(STATUS "=======================================================\n\n")
 
-################################################################################
-#  PERMON_FOUND - set to true if the library is found
-message(STATUS "=======================================================")
-message(STATUS "====== PERMON =========================================")
-message(STATUS "=======================================================")
-message(STATUS "PERMON_ROOT = ${PERMON_ROOT}")
-
-find_package(PERMON)
-if (PERMON_FOUND)
-    flow_define(HAVE_PERMON)
-    message(STATUS "-------------------------------------------------------")
-    message(STATUS "PERMON_FOUND = ${PERMON_FOUND}")
-    message(STATUS "PERMON_INCLUDES = ${PERMON_INCLUDES}")
-    message(STATUS "PERMON_LIBRARY = ${PERMON_LIBRARY}")
-    message(STATUS "=======================================================\n\n") 
-endif()
 
 ################################################################################
 #  BDDCML_FOUND - set to true if the library is found
@@ -490,8 +503,30 @@ if (BDDCML_FOUND)
     message(STATUS "BDDCML_INCLUDES = ${BDDCML_INCLUDES}")
     message(STATUS "BDDCML_LIBRARY = ${BDDCML_LIBRARY}")
     message(STATUS "=======================================================\n\n") 
+    
+    include_directories(${BDDCML_INCLUDES})
 endif()
 
+
+
+################################################################################
+#  PERMON_FOUND - set to true if the library is found
+message(STATUS "=======================================================")
+message(STATUS "====== PERMON =========================================")
+message(STATUS "=======================================================")
+message(STATUS "PERMON_ROOT = ${PERMON_ROOT}")
+
+find_package(PERMON)
+if (PERMON_FOUND)
+    flow_define(HAVE_PERMON)
+    message(STATUS "-------------------------------------------------------")
+    message(STATUS "PERMON_FOUND = ${PERMON_FOUND}")
+    message(STATUS "PERMON_INCLUDES = ${PERMON_INCLUDES}")
+    message(STATUS "PERMON_LIBRARY = ${PERMON_LIBRARY}")
+    message(STATUS "=======================================================\n\n") 
+    
+    include_directories(${PERMON_INCLUDES})
+endif()
 
 
 #################################################################################
@@ -600,18 +635,6 @@ else()
 	)
 endif()
 
-# use python on demand
-if(USE_PYTHON)
-    flow_define(HAVE_PYTHON)
-endif()
-
-# find python 
-set(Python_ADDITIONAL_VERSIONS 3.4) # for cmake version 2.8
-find_package(PythonInterp 3.4 REQUIRED)
-find_package(PythonLibs   3.4 REQUIRED)
-# TODO: remove dependency on python
-include_directories(${PYTHON_INCLUDE_DIRS})
-
 # create shortcuts for runtest
 
 # use relative path
@@ -668,33 +691,7 @@ set(CONFIG_FILE_INCLUDES_DIRECTORY "${CMAKE_BINARY_DIR}/includes")
 ######################################################################################################################### 
 # set includes and libraries paths
 
-include_directories(
-    ${CMAKE_CURRENT_BINARY_DIR}                            # include the output directory, where the rev_num.h file is generated    
-    ${CMAKE_SOURCE_DIR}/src
-    ${CONFIG_FILE_INCLUDES_DIRECTORY}
-    #${CMAKE_SOURCE_DIR}/third_party/metis-include
-    ${CMAKE_SOURCE_DIR}/third_party/fparser-4.5.1
-    ${CMAKE_SOURCE_DIR}/third_party/bparser
-    ${CMAKE_SOURCE_DIR}/third_party/FADBAD++
-    ${PERMON_INCLUDES}
-    ${PETSC_INCLUDES}
-    ${PYTHON_INCLUDE_DIRS}
-    
-    ${Boost_INCLUDE_DIR}
-    ${Armadillo_INCLUDE_DIRS}
-    ${MPI_CXX_INCLUDE_PATH}
-    ${YamlCpp_INCLUDE_DIR}
-    ${PugiXml_INCLUDE_DIR}
-    ${Zlib_INCLUDE_DIR}
-    ${CMAKE_BINARY_DIR}/src/dealii/include    # deal generates config.h
-    ${CMAKE_SOURCE_DIR}/src/dealii/include
-#    ${CMAKE_SOURCE_DIR}/third_party/tbb43_20150316oss/include
-)
 
-if (BDDCML_FOUND)
-    include_directories(${BDDCML_INCLUDES})
-endif()    
-    
 ######################################################################################################################
 # custom targets
 
@@ -732,14 +729,8 @@ set_source_files_properties(${CONFIG_FILE_HEADER}
     HEADER_FILE_ONLY TRUE)
 
 
-# get git information also through configure phase
-set(FLOW123D_SOURCE_DIR ${CMAKE_SOURCE_DIR})
-include(Flow123d_git_info)
 
-# version in reference manual
-STRING(REGEX REPLACE "_" "\\\\_" GIT_VERSION_FULL_LATEX ${GIT_VERSION_FULL})
-configure_file(${CMAKE_SOURCE_DIR}/CMake/flow_version_tex_template ${CMAKE_SOURCE_DIR}/doc/reference_manual/flow_version.tex)    
-    
+
 #### make a script which call correct mpiexec (taken from PETSC)
 # we can not use link, since mpiexec can be sript which reads its location from calling sequence
 #
@@ -834,19 +825,42 @@ make_link_in_source(unit_tests/Makefile)
 ############################################################33 process subdirectories
 
 
-# add fparser sources
-message(STATUS "add subdir FParser")
-add_subdirectory(third_party/fparser-4.5.1)
-
 # add bparser sources
 message(STATUS "add subdir BParser")
 add_subdirectory(third_party/bparser)
+message(STATUS "BPARSER_INCLUDES = ${BPARSER_INCLUDES}")
+
+# add pybind11 sources
+message(STATUS "add subdir pybind11")
+add_subdirectory(third_party/pybind11)
 
 # add tbb sources
 #message(STATUS "add subdir TBB")
 #add_subdirectory(third_party/tbb43_20150316oss)
 
 # add various our sources
+include_directories(
+    ${CMAKE_CURRENT_BINARY_DIR}                            # include the output directory, where the rev_num.h file is generated    
+    ${CMAKE_SOURCE_DIR}/src
+    ${CONFIG_FILE_INCLUDES_DIRECTORY}
+    #${CMAKE_SOURCE_DIR}/third_party/metis-include
+    ${PYBIND11_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/FADBAD++
+    ${PERMON_INCLUDES}
+    ${PETSC_INCLUDES}
+    ${PYTHON_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIR}
+    ${Armadillo_INCLUDE_DIRS}
+    ${MPI_CXX_INCLUDE_PATH}
+    ${YamlCpp_INCLUDE_DIR}
+    ${PugiXml_INCLUDE_DIR}
+    ${Zlib_INCLUDE_DIR}
+#    ${CMAKE_BINARY_DIR}/src/dealii/include    # deal generates config.h
+#    ${CMAKE_SOURCE_DIR}/src/dealii/include
+#    ${CMAKE_SOURCE_DIR}/third_party/tbb43_20150316oss/include
+	${BPARSER_INCLUDES}
+)
+
 add_subdirectory(src)
 add_subdirectory(doc)
 add_subdirectory(unit_tests) # this also adds third_party/gtest
@@ -879,8 +893,9 @@ if( PETSC_FOUND )
 # Setting for RPATH
 
  
-  SET (CMAKE_EXE_LINKER_FLAGS
-    "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,$ORIGIN/../lib" )
+  # BUILD_RPATH and INSTALL_RPATH  to make CMAKE properties working, so set RPATH directly.
+  #SET (CMAKE_EXE_LINKER_FLAGS
+  #  "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,$ORIGIN/../lib -Wl,-rpath,$ORIGIN/../src" )
   
   # bug in cmake https://cmake.org/Bug/view.php?id=13934
   # causing error during CPack operation
@@ -902,17 +917,31 @@ if( PETSC_FOUND )
   add_executable(bin/flow123d src/main.cc)
   target_link_libraries(bin/flow123d 
         flow123d_lib 
+        system_lib
         ${PETSC_ADDITIONAL_LIBS}
         ${PYTHON_LIBRARIES}
         ${Boost_LIBRARIES}
   )     # set libraries linked to main binary (order matter)
-  add_dependencies(bin/flow123d update_source_tree rev_num_always)      # make mpiexec_link when flow123d executable is built
+  add_dependencies("bin/flow123d" update_source_tree rev_num_always)      # make mpiexec_link when flow123d executable is built
   # explicitly say that source file depends on rev_num_always in order to have actual revision number
   set_source_files_properties(src/main.cc OBJECT_DEPENDS ${CONFIG_FILE_REV_NUM}) 
   set_source_files_properties(src/main.cc OBJECT_DEPENDS ${CONFIG_FILE_HEADER}) 
-else()
+  
+  # INSTALL_RPATH should be used for target relinging during its instalation, however that does not happen
+  # for the pacakging directory we use to install to the image therefore we rather set both ../lib and ../src
+  # and use just BUILD_RPATH.
+  set_target_properties("bin/flow123d"  PROPERTIES 
+               BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../src"
+               INSTALL_RPATH "$ORIGIN/../lib")
+ else()
   message(STATUS "PETSC not found. Omitting configuration of the target 'flow123d'.")
 endif()
+
+
+
+
+
+
 
 ###############################################################################
 # Summary
@@ -923,6 +952,7 @@ message(STATUS "Boost:      ${Boost_LIBRARIES}")
 message(STATUS "Petsc:      ${PETSC_LIBRARIES}")
 message(STATUS "   + :      ${PETSC_ADDITIONAL_LIBS}")
 message(STATUS "BDDCML:     ${BDDCML_LIBRARIES}")
+message(STATUS "PERMON:     ${PERMON_LIBRARIES}")
 message(STATUS "Armadillo:  ${ARMADILLO_LIBRARIES}")
 message(STATUS "Python:     ${PYTHON_INCLUDE_DIRS}")
 message(STATUS "YamlCpp:    ${YamlCpp_LIBRARY}")
@@ -939,13 +969,6 @@ message(STATUS "===========================================")
 ####################################################################################
 # Install and Packaging
 
-# Cache PLATFORM_NAME
-# set(CMAKE_INSTALL_MESSAGE ALWAYS)
-set(PLATFORM_NAME ${PLATFORM_NAME} CACHE INTERNAL "Platform name used by prepare_to_publish script.")
-set(CMAKE_INSTALL_PREFIX "$ENV{FLOW123D_HOME}") # install prefix is taken from sys env variable FLOW123D_HOME
-set(_CPACK_INSTALL_ROOT ${CMAKE_BINARY_DIR}/_CPack_Packages/Linux/TGZ/Flow123d-2.0.0_rc-Linux)  
-
-
 # install bin directory
 install(DIRECTORY bin/config                DESTINATION bin/)
 install(DIRECTORY bin/ndiff                 DESTINATION bin/)
@@ -953,15 +976,19 @@ install(DIRECTORY bin/paraview              DESTINATION bin/)
 install(DIRECTORY bin/python                DESTINATION bin/ PATTERN "*.pyc" EXCLUDE)
 
 # binary files
+
 install(PROGRAMS  build_tree/bin/flow123d   DESTINATION bin/)
 install(PROGRAMS  bin/runtest               DESTINATION bin/)
 install(PROGRAMS  bin/exec_parallel         DESTINATION bin/)
 install(PROGRAMS  bin/input_convert.sh      DESTINATION bin/) 
-install(PROGRAMS  bin/yaml_converter/yaml_converter.py    DESTINATION bin/yaml_converter)
-install(PROGRAMS  bin/yaml_converter/YAMLConverter.py     DESTINATION bin/yaml_converter)
-install(PROGRAMS  bin/yaml_converter/change_rules.py      DESTINATION bin/yaml_converter)
+#install(PROGRAMS  bin/yaml_converter/yaml_converter.py    DESTINATION bin/yaml_converter)
+#install(PROGRAMS  bin/yaml_converter/YAMLConverter.py     DESTINATION bin/yaml_converter)
+#install(PROGRAMS  bin/yaml_converter/change_rules.py      DESTINATION bin/yaml_converter)
 install(PROGRAMS  bin/ndiff/ndiff.pl        DESTINATION bin/ndiff)
 install(PROGRAMS  build_tree/bin/mpiexec    DESTINATION bin/)
+install(FILES build_tree/src/libflow123d_lib.so  DESTINATION lib/)
+install(FILES build_tree/src/libsystem_lib.so  DESTINATION lib/)
+install(FILES build_tree/third_party/bparser/libbparser.so  DESTINATION lib/)
 
 # plain files
 install(FILES     bin/README                DESTINATION bin/)
@@ -989,26 +1016,82 @@ install(CODE "execute_process(COMMAND \"${MAKE_EXECUTABLE}\" clean-tests WORKING
 # python libs, sources and config files
 install(DIRECTORY src/python/               DESTINATION lib/python/flow123d)
 install(FILES     config/host_table.yaml    DESTINATION config/)
+install(FILES     config/build/requirements.txt    DESTINATION config)
 
 
 # To install MSVC runtime libraries ... ?
 INCLUDE(InstallRequiredSystemLibraries)
+set(FLOW123D_SOURCE_DIR ${CMAKE_SOURCE_DIR})
+include(Flow123d_git_info)
 
-SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Flow123d - subsurface flow and transport simulator")
+message(STATUS "VERSION patch: ${GIT_VERSION_PATCH}")
+
+
+set(CPACK_PACKAGE_NAME flow123d-base
+    CACHE STRING "The resulting package name"
+)
+
+# which is useful in case of packing only selected components instead of the whole thing
+SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Flow123d - subsurface flow and transport simulator"
+    CACHE STRING "Package description for the package metadata"
+)
+
 SET(CPACK_PACKAGE_VENDOR "Technical University of Liberec")
+
+# make all CPACK_* varaibles escaped/quated when forming the cpack configuration file
+# keep all special characters
+set(CPACK_VERBATIM_VARIABLES YES)
+
+
+
+# Cache PLATFORM_NAME
+# set(CMAKE_INSTALL_MESSAGE ALWAYS)
+#set(PLATFORM_NAME ${PLATFORM_NAME} CACHE INTERNAL "Platform name used by prepare_to_publish script.")
+#set(CMAKE_INSTALL_PREFIX "$ENV{FLOW123D_HOME}") # install prefix is taken from sys env variable FLOW123D_HOME
+set(_CPACK_INSTALL_ROOT ${CMAKE_BINARY_DIR}/_CPack_Packages/Linux/TGZ/Flow123d-2.0.0_rc-Linux)  
+
+# Seems to be a directory within the installation prefix to put some CMAKE releated installation stuff.
+# used by NSYS
+#set(CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})  
+#SET(CPACK_OUTPUT_FILE_PREFIX "${CMAKE_SOURCE_DIR}/_packages")
+
+# https://unix.stackexchange.com/a/11552/254512
+#set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/flow123d")#/${CMAKE_PROJECT_VERSION}")
+
 SET(CPACK_PACKAGE_VERSION_MAJOR ${GIT_VERSION_MAJOR})
 SET(CPACK_PACKAGE_VERSION_MINOR ${GIT_VERSION_MINOR})
 SET(CPACK_PACKAGE_VERSION_PATCH ${GIT_VERSION_PATCH})
-SET(CPACK_COMPONENTS_ALL_IN_ONE_PACKAGE On)
+
+set(CPACK_PACKAGE_CONTACT "jan.brezina@tul.cz")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Jan Brezina")
+
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/doc/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+
+# package name for deb. If set, then instead of some-application-0.9.2-Linux.deb
+# you'll get some-application_0.9.2_amd64.deb (note the underscores too)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+# that is if you want every group to have its own package,
+# although the same will happen if this is not set (so it defaults to ONE_PER_GROUP)
+# and CPACK_DEB_COMPONENT_INSTALL is set to YES
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)#ONE_PER_GROUP)
+#SET(CPACK_COMPONENTS_ALL_IN_ONE_PACKAGE On)
+# without this you won't be able to pack only specified component
+set(CPACK_DEB_COMPONENT_INSTALL YES)
+
 SET(CPACK_SOURCE_IGNORE_FILES "/build_tree/" "/\\\\.git/" "/unit_tests/.*/makefile")
 SET(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-set(CPACK_GENERATOR "TGZ")
+set(CPACK_GENERATOR "TGZ;DEB")
 set(CPACK_SOURCE_GENERATOR "TGZ")
+
+#set(CPACK_PROJECT_CONFIG_FILE ${CMAKE_SOURCE_DIR}/cmake/package.linux.txt)
 
 add_custom_target(package_debug
               COMMAND ${CMAKE_CPACK_COMMAND} --debug --verbose --config CPackConfig.cmake
               COMMENTS "Build package with debug and verbose output")
 
+message(STATUS "Package version: " ${GIT_VERSION_MAJOR} ${GIT_VERSION_MINOR} ${GIT_VERSION_PATCH})
+              
 INCLUDE(CPack)
 
 FILE(APPEND ${CMAKE_BINARY_DIR}/CPackConfig.cmake "set(CPACK_WIN_BINARY_DIRECTORY \"${WIN_CMAKE_CURRENT_BINARY_DIR}\")")

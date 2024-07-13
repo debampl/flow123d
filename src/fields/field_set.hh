@@ -158,12 +158,35 @@ private:
  */
 class FieldSet : public FieldFlag {
 public:
-	DECLARE_EXCEPTION(ExcUnknownField, << "Field set has no field with name: " << FieldCommon::EI_Field::qval);
+    TYPEDEF_ERR_INFO( EI_FieldType, std::string);
+    DECLARE_INPUT_EXCEPTION(ExcUnknownField,
+            << "Unknown field " << FieldCommon::EI_Field::qval << " in the " << EI_FieldType::val << ": \n");
+    DECLARE_INPUT_EXCEPTION(ExcFieldExists,
+            << "Field " << FieldCommon::EI_Field::qval << " exists in equation. You cannot set user field of same name.\n");
 
 	/// Default constructor.
 	FieldSet();
 
-	/**
+    /**
+     * Possible shapes of user fields.
+     */
+    enum UserFieldShape
+    {
+        scalar,
+        vector,
+        tensor
+    };
+
+
+	/// Input selection of user field shape.
+	static const Input::Type::Selection & get_user_field_shape_selection();
+
+    /**
+     * @brief Declare input record type of field defined by user.
+     */
+	static const Input::Type::Record & make_user_field_type(const std::string &equation_name);
+
+    /**
 	 * Add an existing Field to the list. It stores just pointer to the field.
 	 * Be careful to not destroy passed Field before the FieldSet.
 	 *
@@ -277,7 +300,7 @@ public:
     }
 
     /**
-     * Collective interface to @p FieldCommon::set_mesh().
+     * Collective interface to @p FieldCommon::set_input_list().
      */
     void set_input_list(Input::Array input_list, const TimeGovernor &tg) {
         for(FieldCommon *field : field_list) field->set_input_list(input_list, tg);
@@ -373,6 +396,18 @@ public:
 
     /// Return order of evaluated fields by dependency and region_idx.
     std::string print_dependency() const;
+
+    /**
+     * Collective interface to @p FieldCommon::set_default_fieldset().
+     *
+     * Set data member default_fieldset_ to all fields of FieldSet. This data member holds pointer to primary FieldSet (equation)
+     * where field is defined and it is used during evaluation of field dependency in FieldSet (see method set_dependency).
+     * The goal is to allow the user to specify a dependency on other input fields or user defined fields in same equation where
+     * field is defined.
+     */
+    inline void set_default_fieldset() {
+    	for(auto field : field_list) field->set_default_fieldset(*this);
+    }
 
 
 protected:

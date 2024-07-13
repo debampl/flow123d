@@ -680,13 +680,61 @@ public:
 
     Array &operator=(const Array &other)
     {
-        ASSERT_DBG( (n_rows_ == other.n_rows_) && (n_cols_ == other.n_cols_) );
+        ASSERT( (n_rows_ == other.n_rows_) && (n_cols_ == other.n_cols_) );
         reinit(other.size());
         resize(other.size());
 
         for(uint i = 0; i < n_rows_ * n_cols_ * size(); i++) {
             data_[i] = other.data_[i];
         }
+        return *this;
+    }
+
+//    /**
+//     * Return reference to data of one component
+//     */
+//    inline const Type & operator()(uint i_row, uint i_col) const
+//    {
+//        ASSERT_LT(i_row, n_rows_);
+//        ASSERT_LT(i_col, n_cols_);
+//        return data_[(i_col*n_rows_ + i_row) * reserved_];
+//    }
+
+    /**
+     * Return vector of data of one component
+     */
+    inline Type * operator()(uint i_row, uint i_col) const
+    {
+        ASSERT_LT(i_row, n_rows_);
+        ASSERT_LT(i_col, n_cols_);
+        return &(data_[(i_col*n_rows_ + i_row) * reserved_]);
+    }
+
+    /**
+     * Multiply data of component (i_row, i_col)
+     */
+    inline Array & multiply_comp(uint i_row, uint i_col, Type multi)
+    {
+        ASSERT_LT(i_row, n_rows_);
+        ASSERT_LT(i_col, n_cols_);
+        uint i_begin = (i_col*n_rows_ + i_row) * reserved_;
+        for (uint i=i_begin; i<i_begin+size_; ++i)
+            data_[i] *= multi;
+        return *this;
+    }
+
+    /**
+     * Return reference to data of one component
+     */
+    inline Array & add_comp(uint i_row, uint i_col, uint i_row_b, uint i_col_b, const Array &B)
+    {
+        ASSERT_EQ(this->size(), B.size());
+        Type * comp_data = this->operator()(i_row, i_col);
+        Type * comp_data_b = B(i_row_b, i_col_b);
+
+        uint i_begin = (i_col*n_rows_ + i_row) * reserved_;
+        for (uint i=0; i<this->size(); ++i)
+        	comp_data[i] += comp_data_b[i];
         return *this;
     }
 
@@ -708,7 +756,7 @@ public:
      * Resize active part of the allocated space.
      */
     void resize(uint size) {
-        ASSERT_LE_DBG(size, reserved_);
+        ASSERT_LE(size, reserved_);
         size_ = size;
     }
 
@@ -735,7 +783,7 @@ public:
     template<unsigned long long int nr, unsigned long long int nc = 1>
     inline void append(const ArmaMat<Type,nr,nc> &item)
     {
-        ASSERT_LT_DBG(size_, reserved_);
+        ASSERT_LT(size_, reserved_);
         size_ += 1;
         set(size_ - 1) = item;
 
@@ -758,14 +806,14 @@ public:
 //    template<uint nr, uint nc = 1>
 //    inline Mat<Type,nr,nc> get(uint mat_index) const
 //    {
-//        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+//        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //        return Mat<Type,nr,nc>( data_ + mat_index * n_rows_ * n_cols_ );
 //    }
 //
 //    template<uint nr, uint nc = 1>
 //    inline Mat<Type,nr,nc> get(uint mat_index)
 //    {
-//        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+//        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //        return Mat<Type,nr,nc>( data_ + mat_index * n_rows_ * n_cols_ );
 //    }
 
@@ -773,14 +821,14 @@ public:
 //    template<uint nr, uint nc = 1>
 //    inline Mat<Type,nr,nc> get(uint mat_index) const
 //    {
-//        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+//        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //        return Mat<Type,nr,nc>( data_ + mat_index * n_rows_ * n_cols_ );
 //    }
 
     template<uint nr, uint nc = 1>
     inline ArmaMat<Type,nr,nc> mat(uint mat_index) const
     {
-        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //        ArmaMat<Type,nr,nc> m;
 //        double ** ptr = const_cast<double **>(&(m.mem));
 //        *ptr = data_ + mat_index * n_rows_ * n_cols_;
@@ -795,7 +843,7 @@ public:
 //    template<long long unsigned int nr, long long unsigned int nc = 1>
 //    inline void set(uint mat_index, const ArmaMat<Type,nr,nc> &mat)
 //    {
-//        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+//        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //
 //        for (uint i = 0; i < nr * nc; ++i) {
 //            *(data_ + i) = *(mat.mem + i);
@@ -813,15 +861,15 @@ public:
 //    template<uint nr, uint nc = 1>
 //    inline Vec<Type,nr,nc> get_vec(uint mat_index) const
 //    {
-//        ASSERT_DBG( (nr == n_rows_) && (nc == n_cols_) );
+//        ASSERT( (nr == n_rows_) && (nc == n_cols_) );
 //        return Vec<Type,nr,nc>( data_ + mat_index * n_rows_ * n_cols_ );
 //    }
 
     template<uint nr>
     inline ArmaVec<Type, nr> vec(uint mat_index) const
     {
-        ASSERT_DBG( (nr == n_rows_) && (1 == n_cols_) )(n_rows_)(n_cols_);
-        ASSERT_LT_DBG(mat_index, size());
+        ASSERT( (nr == n_rows_) && (1 == n_cols_) )(n_rows_)(n_cols_);
+        ASSERT_LT(mat_index, size());
         ArmaVec<Type, nr> vec;
         for (uint i=0; i<n_rows_; ++i)
             vec(i) = data_[mat_index + i * reserved_];
@@ -830,13 +878,13 @@ public:
 
     inline Type scalar(uint mat_index) const
     {
-        ASSERT_DBG( (1 == n_rows_) && (1 == n_cols_) )(n_rows_)(n_cols_);
-        ASSERT_LT_DBG(mat_index, size());
+        ASSERT( (1 == n_rows_) && (1 == n_cols_) )(n_rows_)(n_cols_);
+        ASSERT_LT(mat_index, size());
         return data_[mat_index];
     }
 
     inline ArrayMatSet set(uint index) {
-        ASSERT_LT_DBG(index, size());
+        ASSERT_LT(index, size());
         return ArrayMatSet(data_ + index, n_rows_, n_cols_, reserved_);
     }
 
@@ -847,7 +895,7 @@ public:
      */
     inline arma::mat arma_mat(uint i) const
     {
-        ASSERT_LT_DBG(i, size());
+        ASSERT_LT(i, size());
         arma::mat mat(n_rows_, n_cols_);
         for (uint row=0; row<n_rows_; ++row)
             for (uint col=0; col<n_cols_; ++col)
@@ -862,8 +910,8 @@ public:
      */
     inline arma::vec arma_vec(uint i) const
     {
-        ASSERT_LT_DBG(i, size());
-        ASSERT_EQ_DBG(n_cols_, 1);
+        ASSERT_LT(i, size());
+        ASSERT_EQ(n_cols_, 1);
         arma::vec vec(n_rows_);
         for (uint row=0; row<n_rows_; ++row)
             vec(i) = data_[i + row * reserved_];

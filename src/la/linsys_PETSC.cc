@@ -46,6 +46,9 @@ const it::Record & LinSys_PETSC::get_input_type() {
 		.declare_key("a_tol", it::Double(0.0), it::Default::read_time("Default value is set by the nonlinear solver or the equation. "
                         "If not, we use the value 1.0e-11."),
 		            "Absolute residual tolerance.")
+        .declare_key("d_tol", it::Double(0.0), it::Default::read_time("Default value is set by the nonlinear solver or the equation. "
+                        "If not, we use the value 10000."),
+		            "Tolerance for divergence.")
         .declare_key("max_it", it::Integer(0), it::Default::read_time("Default value is set by the nonlinear solver or the equation. "
                         "If not, we use the value 1000."),
                     "Maximum number of outer iterations of the linear solver.")
@@ -87,16 +90,18 @@ LinSys_PETSC::LinSys_PETSC( LinSys_PETSC &other )
 	VecCopy(other.off_vec_, off_vec_);
 }
 
-void LinSys_PETSC::set_tolerances(double  r_tol, double a_tol, unsigned int max_it)
+void LinSys_PETSC::set_tolerances(double  r_tol, double a_tol, double d_tol, unsigned int max_it)
 {
     if (! in_rec_.is_empty()) {
         // input record is set
         r_tol_ = in_rec_.val<double>("r_tol", r_tol);
         a_tol_ = in_rec_.val<double>("a_tol", a_tol);
+        d_tol_ = in_rec_.val<double>("d_tol", d_tol);
         max_it_ = in_rec_.val<unsigned int>("max_it", max_it);
     } else {
         r_tol_ = r_tol;
         a_tol_ = a_tol;
+        d_tol_ = d_tol;
         max_it_ = max_it;
 
     }
@@ -125,7 +130,7 @@ void LinSys_PETSC::start_add_assembly()
         case DONE:
             break;
         default:
-        	OLD_ASSERT( false, "Can not set values. Matrix is not preallocated.\n");
+        	ASSERT_PERMANENT(false).error("Can not set values. Matrix is not preallocated.\n");
     }
     status_ = ADD;
 }
@@ -143,7 +148,7 @@ void LinSys_PETSC::start_insert_assembly()
         case DONE:
             break;
         default:
-        	OLD_ASSERT( false, "Can not set values. Matrix is not preallocated.\n");
+        	ASSERT_PERMANENT(false).error("Can not set values. Matrix is not preallocated.\n");
     }
     status_ = INSERT;
 }
@@ -176,7 +181,7 @@ void LinSys_PETSC::rhs_set_values( int nrow, int *rows, double *vals )
             break;
         case ALLOCATE: 
             break;
-        default: OLD_ASSERT(false, "LinSys's status disallow set values.\n");
+        default: ASSERT_PERMANENT(false).error("LinSys's status disallow set values.\n");
     }
 
     rhs_changed_ = true;
@@ -202,7 +207,7 @@ void LinSys_PETSC::preallocate_values(int nrow,int *rows,int ncol,int *cols)
 
 void LinSys_PETSC::preallocate_matrix()
 {
-	OLD_ASSERT(status_ == ALLOCATE, "Linear system has to be in ALLOCATE status.");
+	ASSERT_EQ(status_, ALLOCATE).error("Linear system has to be in ALLOCATE status.");
 
     PetscErrorCode ierr;
     PetscInt *on_nz, *off_nz;
@@ -288,7 +293,7 @@ void LinSys_PETSC::apply_constrains( double scalar )
     PetscErrorCode ierr;
 
     // check that system matrix is assembled
-    OLD_ASSERT ( status_ == DONE, "System matrix and right-hand side are not assembled when applying constraints." );
+    ASSERT_EQ(status_, DONE).error("System matrix and right-hand side are not assembled when applying constraints." );
 
     // number of constraints
     PetscInt numConstraints = static_cast<PetscInt>( constraints_.size() );
@@ -381,8 +386,8 @@ LinSys::SolveInfo LinSys_PETSC::solve()
 
 
     // TODO take care of tolerances - shall we support both input file and command line petsc setting
-    chkerr(KSPSetTolerances(system, r_tol_, a_tol_, PETSC_DEFAULT,PETSC_DEFAULT));
-    chkerr(KSPSetTolerances(system, r_tol_, a_tol_, PETSC_DEFAULT,  max_it_));
+    chkerr(KSPSetTolerances(system, r_tol_, a_tol_, d_tol_,PETSC_DEFAULT));
+    chkerr(KSPSetTolerances(system, r_tol_, a_tol_, d_tol_,  max_it_));
     KSPSetFromOptions(system);
     // We set the KSP flag set_initial_guess_nonzero
     // unless KSP type is preonly.

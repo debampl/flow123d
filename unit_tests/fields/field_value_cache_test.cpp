@@ -46,7 +46,9 @@ public:
         this->init(eval_points);
     }
 
-    ~FieldValueCacheTest() {}
+    ~FieldValueCacheTest() {
+        Profiler::uninitialize();
+    }
 
     void add_bulk_points(DHCellAccessor cell) {
         unsigned int reg_idx = cell.elm().region_idx().idx();
@@ -55,6 +57,7 @@ public:
         }
         this->eval_point_data_.make_permanent();
         elm_to_patch_.insert(cell.elm_idx());
+        DebugOut().fmt("Bulk points of element '{}' added. Size of eval_point_data is '{}'.\n", cell.elm_idx(), this->eval_point_data_.permanent_size());
     }
 
     void add_side_points(DHCellSide cell_side) {
@@ -67,6 +70,7 @@ public:
         	this->eval_point_data_.emplace_back(ghost_reg, cell_side.elem_idx(), p_ghost.eval_point_idx(), cell_side.cell().local_idx());
         }
         elm_to_patch_.insert(cell_side.elem_idx());
+        DebugOut().fmt("Side points of element '{}' added. Size of eval_point_data is '{}'.\n", cell_side.cell().elm_idx(), this->eval_point_data_.permanent_size());
     }
 
     Mesh * mesh_;
@@ -120,7 +124,7 @@ TEST_F(FieldValueCacheTest, field_value_cache) {
 
     // check value
     for(BulkPoint q_point: bulk_eval->points(this->position_in_cache(dh_cell.elm_idx()), this)) {
-        unsigned int elem_patch_idx = this->position_in_cache(dh_cell.elm().mesh_idx());
+        unsigned int elem_patch_idx = this->position_in_cache(dh_cell.elm().idx());
         auto point_val = this->get_value<ScalarValue>(value_cache, elem_patch_idx, q_point.eval_point_idx());
     	EXPECT_DOUBLE_EQ( point_val, const_val(0) );
     }
@@ -128,7 +132,7 @@ TEST_F(FieldValueCacheTest, field_value_cache) {
       if ( cell_side.n_edge_sides() >= 2 )
         for( DHCellSide edge_side : cell_side.edge_sides() )
             for ( EdgePoint q_point : edge_eval->points(edge_side, this) ) {
-                unsigned int elem_patch_idx = this->position_in_cache(edge_side.element().mesh_idx());
+                unsigned int elem_patch_idx = this->position_in_cache(edge_side.element().idx());
                 auto point_val = this->get_value<ScalarValue>(value_cache, elem_patch_idx, q_point.eval_point_idx());
                 EXPECT_DOUBLE_EQ( point_val, const_val(0) );
             }
@@ -203,7 +207,7 @@ TEST_F(FieldValueCacheTest, element_cache_map) {
     EXPECT_EQ(this->region_chunk_begin(0), 0);
     EXPECT_EQ(this->region_chunk_end(0), 8);
     EXPECT_EQ(this->region_chunk_begin(1), 8);
-    EXPECT_EQ(this->region_chunk_end(1), 12);
+    EXPECT_EQ(this->region_chunk_end(1), element_starts_[this->n_regions()+1]);
 
     this->finish_elements_update();
     this->eval_point_data_.reset();

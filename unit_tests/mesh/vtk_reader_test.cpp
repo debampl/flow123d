@@ -19,6 +19,7 @@
 #include "io/msh_gmshreader.h"
 #include "io/reader_cache.hh"
 #include "system/tokenizer.hh"
+#include "system/sys_profiler.hh"
 
 
 class VtkMeshReaderTest : public VtkMeshReader {
@@ -52,8 +53,8 @@ public:
 		for (unsigned int i=0; i<bulk_elements_id_.size(); ++i) bulk_elements_id_[i]=i;
 
 		// set new cache
-	    ElementDataCacheBase *current_cache = new ElementDataCache<double>(actual_header.field_name, actual_header.time, 1,
-	    		actual_header.n_components*actual_header.n_entities);
+	    ElementDataCacheBase *current_cache = new ElementDataCache<double>(actual_header.field_name, actual_header.time,
+	    		actual_header.n_components*actual_header.n_entities, mesh->n_elements());
 
 		switch (data_format_) {
 			case DataFormat::ascii: {
@@ -61,23 +62,23 @@ public:
 				break;
 			}
 			case DataFormat::binary_uncompressed: {
-				ASSERT_PTR(data_stream_).error();
+				ASSERT_PERMANENT_PTR(data_stream_).error();
 				parse_binary_data( *current_cache, actual_header.n_components, actual_header.n_entities, actual_header.position);
 				break;
 			}
 			case DataFormat::binary_zlib: {
-				ASSERT_PTR(data_stream_).error();
+				ASSERT_PERMANENT_PTR(data_stream_).error();
 				parse_compressed_data(* current_cache, actual_header.n_components, actual_header.n_entities, actual_header.position);
 				break;
 			}
 			default: {
-				ASSERT(false).error(); // should not happen
+				ASSERT_PERMANENT(false).error(); // should not happen
 				break;
 			}
 		}
 
 		mesh->init_node_vector(actual_header.n_entities);
-		std::vector<double> &vect = *( static_cast< ElementDataCache<double> *>(current_cache)->get_component_data(0).get() );
+		std::vector<double> &vect = *( static_cast< ElementDataCache<double> *>(current_cache)->get_data().get() );
 		arma::vec3 point;
 		for (unsigned int i=0, ivec=0; i<actual_header.n_entities; ++i) {
 	        point[0]=vect[ivec]; ++ivec;
@@ -114,6 +115,8 @@ TEST(PugiXml, read_simple_xml) {
 
 // test of reading of VTU file
 TEST(VtkReaderTest, read_ascii_vtu) {
+    Profiler::instance();
+
     FilePath::set_io_dirs(".",UNIT_TESTS_SRC_DIR,"",".");
     std::string mesh_in_string = "{mesh_file=\"output/test_output_vtk_ascii_ref.vtu\"}";
     auto reader = VtkMeshReaderTest::test_factory(mesh_in_string);
@@ -150,10 +153,13 @@ TEST(VtkReaderTest, read_ascii_vtu) {
     }
 
     //delete mesh;
+    Profiler::uninitialize();
 }
 
 
 TEST(VtkReaderTest, read_binary_vtu) {
+    Profiler::instance();
+
     FilePath::set_io_dirs(".",UNIT_TESTS_SRC_DIR,"",".");
     FilePath mesh_file("output/test_output_vtk_binary_ref.vtu", FilePath::input_file);
 
@@ -193,25 +199,34 @@ TEST(VtkReaderTest, read_binary_vtu) {
 
     bool boundary_domain = false; // bulk data
     BaseMeshReader::HeaderQuery vector_header_params("vector_field", 0.0, OutputTime::DiscreteSpace::ELEM_DATA);
-    // read data by components for MultiField
-    for (i=0; i<3; ++i) {
-        ReaderCache::get_reader(mesh_file)->find_header(vector_header_params);
-        typename ElementDataCache<double>::ComponentDataPtr multifield_data =
-                ReaderCache::get_reader(mesh_file)->template get_element_data<double>(6, 1, boundary_domain, i);
-    	std::vector<double> &vec = *( multifield_data.get() );
-    	EXPECT_EQ(6, vec.size());
-    	for (j=0; j<vec.size(); j++) {
-    		EXPECT_DOUBLE_EQ( 0.5*(i+1), vec[j] );
-    	}
-    }
+    auto header = ReaderCache::get_reader(mesh_file)->find_header(vector_header_params);
+	{
+        // test exception on wrong number of components
+        uint wrong_number_of_components = 7;
+        EXPECT_EQ( 3, header.n_components );
+		EXPECT_THROW_WHAT( { ReaderCache::get_reader(mesh_file)->template get_element_data<double>(
+            header, 6, wrong_number_of_components, boundary_domain); }, BaseMeshReader::ExcWrongComponentsCount,
+            "Wrong number of components of field 'vector_field' at time 0 in the input file: ");
+	}
+	{
+        // test reading vector field
+        typename ElementDataCache<double>::CacheData multifield_data =
+                ReaderCache::get_reader(mesh_file)->template get_element_data<double>(header, 6, 3, boundary_domain);
+        std::vector<double> &vec = *( multifield_data.get() );
+        EXPECT_EQ(18, vec.size());
+        for (j=0; j<vec.size(); j++) {
+            // DebugOut() << i << ": " << vec[j] << "\n";
+            EXPECT_DOUBLE_EQ( 0.5*(j%3+1), vec[j] );
+        }
+	}
 
     // read data to one vector for Field
     BaseMeshReader::HeaderQuery tensor_header_params("tensor_field", 1.0, OutputTime::DiscreteSpace::ELEM_DATA);
     {
     	std::vector<double> ref_data = { 1, 4, 7, 2, 5, 8, 3, 6, 9 };
-    	ReaderCache::get_reader(mesh_file)->find_header(tensor_header_params);
-    	typename ElementDataCache<double>::ComponentDataPtr field_data =
-    	        ReaderCache::get_reader(mesh_file)->template get_element_data<double>(6, 9, boundary_domain, 0);
+    	auto header = ReaderCache::get_reader(mesh_file)->find_header(tensor_header_params);
+    	typename ElementDataCache<double>::CacheData field_data =
+    	        ReaderCache::get_reader(mesh_file)->template get_element_data<double>(header, 6, 9, boundary_domain);
     	std::vector<double> &vec = *( field_data.get() );
     	EXPECT_EQ(54, vec.size());
     	for (j=0; j<vec.size(); j++) {
@@ -220,10 +235,13 @@ TEST(VtkReaderTest, read_binary_vtu) {
     }
 
    // delete mesh;
+    Profiler::uninitialize();
 }
 
 
 TEST(VtkReaderTest, read_compressed_vtu) {
+    Profiler::instance();
+
     FilePath::set_io_dirs(".",UNIT_TESTS_SRC_DIR,"",".");
     std::string mesh_in_string = "{mesh_file=\"output/test_output_vtk_zlib_ref.vtu\"}";
     auto reader = VtkMeshReaderTest::test_factory(mesh_in_string);
@@ -247,10 +265,13 @@ TEST(VtkReaderTest, read_compressed_vtu) {
     }
 
     //delete mesh;
+    Profiler::uninitialize();
 }
 
 
 TEST(VtkReaderTest, read_mesh) {
+    Profiler::instance();
+
     FilePath::set_io_dirs(".",UNIT_TESTS_SRC_DIR,"",".");
     std::string mesh_in_string = "{ mesh_file=\"output/test_output_vtk_ascii_ref.vtu\", optimize_mesh=false }";
     auto reader = reader_constructor(mesh_in_string);
@@ -261,4 +282,5 @@ TEST(VtkReaderTest, read_mesh) {
 
     EXPECT_EQ(8, mesh->n_nodes());
     EXPECT_EQ(6, mesh->n_elements());
+    Profiler::uninitialize();
 }

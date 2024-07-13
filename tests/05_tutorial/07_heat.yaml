@@ -130,7 +130,7 @@
 ##
 ##![The temperature of exchanger after 30 years.](tutor_figures/07_transport.pdf){#fig:tempr_grad width=600px height=600px}
 ##
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Example 7 - Heat transport
   mesh:
@@ -164,7 +164,7 @@ problem: !Coupling_Sequential
         regions:
           - well1_deep
           - well2_deep
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         options: -ksp_type preonly -pc_type lu
@@ -207,13 +207,13 @@ problem: !Coupling_Sequential
         solid_heat_conductivity: 2.5
       - region: rock
         init_temperature: !FieldFormula
-          value: 10-z/5000*150+273.15
+          value: 10-X[2]/5000*150+273.15
         porosity: 1.0e-05
       - region: exchanger
         porosity: 1.0e-05
       - region: wells
         init_temperature: !FieldFormula
-          value: 15-z/5000*150+273.15
+          value: 15-X[2]/5000*150+273.15
         porosity: 1.0e-05
         fracture_sigma: 0
       - region: wells_deep
@@ -225,7 +225,7 @@ problem: !Coupling_Sequential
       - region: .deep
         bc_type: dirichlet
         bc_temperature: !FieldFormula
-          value: 10-z/5000*150+273.15
+          value: 10-X[2]/5000*150+273.15
       - region: .surface
         bc_type: dirichlet
         bc_temperature: !FieldFormula
@@ -233,7 +233,7 @@ problem: !Coupling_Sequential
       - region: .sides
         bc_type: dirichlet
         bc_temperature: !FieldFormula
-          value: 10-z/5000*150+273.15
+          value: 10-X[2]/5000*150+273.15
     output_stream:
       file: heat
       format: !gmsh

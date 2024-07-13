@@ -1,4 +1,4 @@
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test2 - Transport 1D-2D (convection, dual porosity, sorption)
   mesh:
@@ -6,15 +6,11 @@ problem: !Coupling_Sequential
     regions:
       - !Union
         name: subset
-        regions:
-          - 2d
-          - 1d
+        regions: [1d, 2d]
       - !Union
         name: .sides
-        regions:
-          - .2d
-          - .1d
-  flow_equation: !Flow_Darcy_MH
+        regions: [.1d, .2d]
+  flow_equation: !Flow_Darcy_LMH
     input_fields:
       - region: 1d
         anisotropy: 10
@@ -26,7 +22,7 @@ problem: !Coupling_Sequential
       - region: .sides
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x
+          value: X[0]
     output_stream:
       file: ./test2.pvd
       format: !vtk

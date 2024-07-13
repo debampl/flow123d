@@ -46,19 +46,16 @@
 #include "mesh/elements.h"                             // for Element::dim
 #include "mesh/region.hh"                              // for RegionDB::ExcU...
 #include "system/asserts.hh"                           // for Assert, ASSERT
-#include "system/exc_common.hh"                        // for ExcAssertMsg
 #include "system/exceptions.hh"                        // for ExcAssertMsg::...
-#include "system/global_defs.h"                        // for OLD_ASSERT, msg
 #include "tools/time_governor.hh"                      // for TimeStep
 
 class Mesh;
 class Observe;
 class EvalPoints;
 class BulkPoint;
-class EdgePoint;
-class CouplingPoint;
-class BoundaryPoint;
+class SidePoint;
 class FieldSet;
+class ElementDataCacheBase;
 template <int spacedim> class ElementAccessor;
 template <int spacedim, class Value> class FieldFE;
 namespace detail
@@ -146,7 +143,7 @@ public:
      */
     Field();
 
-    Field(const string &name, bool bc = false);
+    Field(const string &name);
 
     /**
      * Constructor that must be used for create of MultiField components.
@@ -154,7 +151,7 @@ public:
      * Set parameters @p component_index_, @p shared_->input_name_ and @p name_.
      * Parameter name_ of Field is consisted of component name and MultiField name.
      */
-    Field(unsigned int component_index, string input_name, string name = "", bool bc = false);
+    Field(unsigned int component_index, string input_name, string name = "");
 
     /**
      * Copy constructor. Keeps shared history, declaration data, mesh.
@@ -178,15 +175,7 @@ public:
 
 
     /// Return appropriate value to EdgePoint in FieldValueCache
-    typename Value::return_type operator() (EdgePoint &p);
-
-
-    /// Return appropriate value to CouplingPoint in FieldValueCache
-    typename Value::return_type operator() (CouplingPoint &p);
-
-
-    /// Return appropriate value to BoundaryPoint in FieldValueCache
-    typename Value::return_type operator() (BoundaryPoint &p);
+    typename Value::return_type operator() (SidePoint &p);
 
 
     /**
@@ -261,17 +250,18 @@ public:
     /**
      * Implementation of FieldCommonBase::output().
      */
-    void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpaceFlags type) override;
-
-    /**
-     * Implementation of FieldCommonBase::observe_output().
-     */
-    void observe_output(std::shared_ptr<Observe> observe) override;
+    void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpace type) override;
 
     /**
      * Returns true, if field is currently set to a time in which it is discontinuous.
      */
     //bool is_jump_time();
+
+    /**
+     * Check that the field is in fact FieldFE set on all bulk regions, return shared pointer to that FieldFE or NULL
+     * if the Field is not FieldFE.
+     */
+    std::shared_ptr< FieldFE<spacedim, Value> > get_field_fe();
 
 
     /**
@@ -304,20 +294,6 @@ public:
     std::string get_value_attribute() const override;
 
     /**
-     * Returns one value in one given point @p on an element given by ElementAccessor @p elm.
-     * It returns reference to he actual value in order to avoid temporaries for vector and tensor values.
-     */
-    virtual typename Value::return_type const &value(const Point &p, const ElementAccessor<spacedim> &elm) const;
-
-    /**
-     * Returns std::vector of scalar values in several points at once. The base class implements
-     * trivial implementation using the @p value(,,) method. This is not optimal as it involves lot of virtual calls,
-     * but this overhead can be negligible for more complex fields as Python of Formula.
-     */
-    virtual void value_list(const Armor::array &point_list, const  ElementAccessor<spacedim> &elm,
-                       std::vector<typename Value::return_type>  &value_list) const;
-
-    /**
      * Add a new factory for creating Field algorithms on individual regions.
      * The last factory is tried first, the last one is always the default implementation
      * Field<...>::FactoryBase.
@@ -332,10 +308,16 @@ public:
     void set_input_list(const Input::Array &list, const TimeGovernor &tg) override;
 
     /**
+     * Create and return shared_ptr to ElementDataCache appropriate to Field. Data cache is given by discrete @p space_type
+     * and is stored into data structures of output time @p stream for postponed output too.
+     */
+    void set_output_data_cache(OutputTime::DiscreteSpace space_type, std::shared_ptr<OutputTime> stream) override;
+
+    /**
      * Interpolate given field into output discrete @p space_type and store the values
      * into storage of output time @p stream for postponed output.
      */
-    void compute_field_data(OutputTime::DiscreteSpaceFlags space_type, std::shared_ptr<OutputTime> stream);
+    void compute_field_data(OutputTime::DiscreteSpace space_type, std::shared_ptr<OutputTime> stream);
 
     /// Implements FieldCommon::cache_allocate
     void cache_reallocate(const ElementCacheMap &cache_map, unsigned int region_idx) const override;
@@ -352,7 +334,13 @@ public:
     /**
      * Implementation of FieldCommon::set_dependency().
      */
-    std::vector<const FieldCommon *> set_dependency(FieldSet &field_set, unsigned int i_reg) const override;
+    std::vector<const FieldCommon *> set_dependency(unsigned int i_reg) const override;
+
+    /// Implements FieldCommon::fill_data_value
+    void fill_data_value(const std::vector<int> &offsets) override;
+
+    /// Implements FieldCommon::fill_observe_value
+    void fill_observe_value(std::shared_ptr<ElementDataCacheBase> output_cache_base, const std::vector<int> &offsets) override;
 
 protected:
 
@@ -365,21 +353,10 @@ protected:
      */
     void update_history(const TimeStep &time);
 
-    /// Fills acutally the data cache with field values, used in @p compute_field_data
-    void fill_data_cache(OutputTime::DiscreteSpace space_type,
-                         std::shared_ptr<OutputTime> stream,
-                         std::shared_ptr<ElementDataCache<typename Value::element_type>> data_cache);
-
     /**
      *  Check that whole field list (@p region_fields_) is set, possibly use default values for unset regions.
      */
     void check_initialized_region_fields_();
-
-    /**
-     * Check that the field is in fact FieldFE set on all bulk regions, return shared pointer to that FieldFE or NULL
-     * if the Field is not FieldFE.
-     */
-    std::shared_ptr< FieldFE<spacedim, Value> > get_field_fe();
 
     /**************** Shared data **************/
 
@@ -428,6 +405,9 @@ protected:
      */
     mutable FieldValueCache<typename Value::element_type> value_cache_;
 
+    /// ElementDataCache used during field output, object is shared with OutputTime
+    std::shared_ptr<ElementDataCache<typename Value::element_type>> output_data_cache_;
+
 
 
     template<int dim, class Val>
@@ -438,43 +418,6 @@ protected:
 
 };
 
-
-
-
-
-
-
-/****************************************************************************************
- * Inlined methods of Field< ... >
- */
-
-template<int spacedim, class Value>
-inline typename Value::return_type const & Field<spacedim,Value>::value(const Point &p, const ElementAccessor<spacedim> &elm) const
-{
-
-    ASSERT(this->set_time_result_ != TimeStatus::unknown)(this->name()).error("Unknown time status.\n");
-	OLD_ASSERT(elm.region_idx().idx() < region_fields_.size(), "Region idx %u out of range %lu, field: %s\n",
-           elm.region_idx().idx(), (unsigned long int) region_fields_.size(), name().c_str());
-	OLD_ASSERT( region_fields_[elm.region_idx().idx()] ,
-    		"Null field ptr on region id: %d, idx: %d, field: %s\n", elm.region().id(), elm.region_idx().idx(), name().c_str());
-    return region_fields_[elm.region_idx().idx()]->value(p,elm);
-}
-
-
-
-template<int spacedim, class Value>
-inline void Field<spacedim,Value>::value_list(const Armor::array &point_list, const ElementAccessor<spacedim> &elm,
-                   std::vector<typename Value::return_type>  &value_list) const
-{
-    ASSERT(this->set_time_result_ != TimeStatus::unknown)(this->name()).error("Unknown time status.\n");
-	OLD_ASSERT(elm.region_idx().idx() < region_fields_.size(), "Region idx %u out of range %lu, field: %s\n",
-           elm.region_idx().idx(), (unsigned long int) region_fields_.size(), name().c_str());
-	OLD_ASSERT( region_fields_[elm.region_idx().idx()] ,
-    		"Null field ptr on region id: %d, field: %s\n", elm.region().id(), name().c_str());
-    ASSERT_DBG(point_list.n_rows() == spacedim && point_list.n_cols() == 1).error("Invalid point size.\n");
-
-    region_fields_[elm.region_idx().idx()]->value_list(point_list,elm, value_list);
-}
 
 
 

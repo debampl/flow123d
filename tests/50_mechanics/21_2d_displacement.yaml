@@ -3,7 +3,7 @@
 # Source for reference:
 # Check prescribed displacement in Paraview.
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: 2D linear elastic Dirichlet BC problem.
   mesh:
@@ -19,7 +19,7 @@ problem: !Coupling_Sequential
     a_tol: 1e-15
     r_tol: 1e-12
 
-    flow_equation: !Flow_Richards_LMH
+    flow_equation: !Flow_Darcy_LMH
         input_fields:
           - region: BULK
             conductivity: 1
@@ -50,4 +50,4 @@ problem: !Coupling_Sequential
           - region: [.BOUNDARY]
             bc_type: displacement
             bc_displacement: !FieldFormula
-              value: [-0.03*x*y, -0.17*x*y, 0]
+              value: "[-0.03*X[0]*X[1], -0.17*X[0]*X[1], 0]"

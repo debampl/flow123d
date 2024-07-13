@@ -3,7 +3,7 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: GMSH output of flow and transport in P1_average (nodes) interpolation 
   mesh:
@@ -19,14 +19,14 @@ problem: !Coupling_Sequential
         regions:
           - .fracture_top
           - .rock_top
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-07
     input_fields:
       - region: rock
         conductivity: !FieldFormula
-          value: 0.001*(y + 1.0)
+          value: 0.001*(X[1] + 1.0)
         cross_section: 1
       - region: fracture
         conductivity: 1

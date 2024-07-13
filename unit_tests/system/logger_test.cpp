@@ -58,6 +58,7 @@ TEST(Logger, no_log_file) {
 	LoggerOptions::get_instance().set_log_file("");
 
 	logger_messages();
+    Profiler::uninitialize();
 }
 
 TEST(Logger, without_init_log_file) {
@@ -66,6 +67,7 @@ TEST(Logger, without_init_log_file) {
 	LoggerOptions::get_instance().setup_mpi(MPI_COMM_WORLD);
 
 	logger_messages();
+    Profiler::uninitialize();
 }
 
 TEST(Logger, log_file_without_mpi) {
@@ -74,6 +76,7 @@ TEST(Logger, log_file_without_mpi) {
 	LoggerOptions::get_instance().set_log_file("without_mpi");
 
 	logger_messages();
+    Profiler::uninitialize();
 }
 
 TEST(Logger, log_file_with_mpi) {
@@ -83,6 +86,7 @@ TEST(Logger, log_file_with_mpi) {
 	LoggerOptions::get_instance().set_log_file("with_mpi");
 
 	logger_messages();
+    Profiler::uninitialize();
 }
 
 TEST(Logger, mask_manipulator) {
@@ -96,6 +100,7 @@ TEST(Logger, mask_manipulator) {
 				 << (StreamMask::cout | StreamMask::log) << "Fourth message to cout and file.\n";
 
 	LoggerOptions::get_instance().reset();
+    Profiler::uninitialize();
 }
 
 TEST(Logger, fmt_lib) {
@@ -110,6 +115,7 @@ TEST(Logger, fmt_lib) {
 	MessageOut().fmt("int: {} double: {} string: {}\n", i, f, s);
 
 	LoggerOptions::get_instance().reset();
+    Profiler::uninitialize();
 }
 
 TEST(FealAssert, warning) {
@@ -119,9 +125,10 @@ TEST(FealAssert, warning) {
 
 	std::string s1 = "feal";
     std::string s2 = "assert";
-    FEAL_ASSERT(s1.empty() && s2.empty())(s1)(s2).warning("Strings must be empty.");
+    FEAL_ASSERT_PERMANENT(s1.empty() && s2.empty())(s1)(s2).warning("Strings must be empty.");
 
-    // shorter version of macro - "ASSERT" - is not in conflict with external library
-    ASSERT(0).warning("Zero value.");
+    // shorter version of macro - "ASSERT_PERMANENT" - is not in conflict with external library
+    ASSERT_PERMANENT(0).warning("Zero value.");
 
+    Profiler::uninitialize();
 }

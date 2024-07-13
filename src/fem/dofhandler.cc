@@ -46,7 +46,7 @@ DOFHandlerBase::~DOFHandlerBase()
 
 
 
-DOFHandlerMultiDim::DOFHandlerMultiDim(Mesh& _mesh, bool make_elem_part)
+DOFHandlerMultiDim::DOFHandlerMultiDim(MeshBase& _mesh, bool make_elem_part)
 	: DOFHandlerBase(_mesh),
 	  ds_(nullptr),
 	  is_parallel_(true),
@@ -54,6 +54,14 @@ DOFHandlerMultiDim::DOFHandlerMultiDim(Mesh& _mesh, bool make_elem_part)
 	  scatter_to_seq_(nullptr),
 	  el_ds_(nullptr)
 {
+    // Set up flag that ensures that edges are allocated, so that dofs can be distributed on edges.
+    // Currently this works only for Mesh objects, not for BCMesh.
+    if (dynamic_cast<Mesh*>(mesh_) != nullptr) {
+        distribute_edge_dofs = true;
+    } else {
+        distribute_edge_dofs = false;
+    }
+
 	if (make_elem_part) make_elem_partitioning();
 }
 
@@ -95,7 +103,7 @@ void DOFHandlerMultiDim::init_dof_starts(
     // may be discontinuous on nodes shared by different
     // dimensions.
     unsigned int n_node_dofs = 0;
-    for (unsigned int nid=0; nid<mesh_->tree->n_nodes(); nid++)
+    for (unsigned int nid=0; nid<mesh_->duplicate_nodes()->n_nodes(); nid++)
     {
       node_dof_starts.push_back(n_node_dofs);
       n_node_dofs += ds_->n_node_dofs(nid);
@@ -121,7 +129,7 @@ void DOFHandlerMultiDim::init_status(
     {
       for (unsigned int n=0; n<cell.dim()+1; n++)
       {
-        unsigned int nid = mesh_->tree->objects(cell.dim())[mesh_->tree->obj_4_el()[cell.elm_idx()]].nodes[n];
+        unsigned int nid = mesh_->duplicate_nodes()->objects(cell.dim())[mesh_->duplicate_nodes()->obj_4_el()[cell.elm_idx()]].nodes[n];
         node_status[nid] = VALID_NFACE;
       }
     }
@@ -133,28 +141,37 @@ void DOFHandlerMultiDim::init_status(
       {
         for (unsigned int n=0; n<cell.dim()+1; n++)
         {
-          unsigned int nid = mesh_->tree->objects(cell.dim())[mesh_->tree->obj_4_el()[cell.elm_idx()]].nodes[n];
+          unsigned int nid = mesh_->duplicate_nodes()->objects(cell.dim())[mesh_->duplicate_nodes()->obj_4_el()[cell.elm_idx()]].nodes[n];
           node_status[nid] = INVALID_NFACE;
         }
       }
     }
     
-    // mark local edges
-    for (auto eid : edg_4_loc)
-        edge_status[eid] = VALID_NFACE;
-    
-    // unmark dofs on ghost cells from lower procs
-	for (auto cell : this->ghost_range())
+    if (distribute_edge_dofs)
     {
-      if (cell.elm().proc() < el_ds_->myp())
-      {
-        for (unsigned int n=0; n<cell.dim()+1; n++)
+        // mark local edges
+        for (auto eid : edg_4_loc)
+            edge_status[eid] = VALID_NFACE;
+        
+        // unmark dofs on ghost cells from lower procs
+        for (auto cell : this->ghost_range())
         {
-          unsigned int eid = cell.elm().side(n)->edge_idx();
-          edge_status[eid] = INVALID_NFACE;
+            if (cell.elm().proc() < el_ds_->myp())
+            {
+                for (unsigned int n=0; n<cell.dim()+1; n++)
+                {
+                    unsigned int eid = cell.elm().side(n)->edge_idx();
+                    edge_status[eid] = INVALID_NFACE;
+                }
+            }
         }
-      }
     }
+    else
+    {
+        for (auto eid : edg_4_loc)
+            edge_status[eid] = INVALID_NFACE;
+    }
+    
 }
 
 
@@ -231,7 +248,7 @@ void DOFHandlerMultiDim::update_local_dofs(unsigned int proc,
             if (dh_cell.cell_dof(idof).dim == 0)
             {   // update nodal dof
                 unsigned int dof_nface_idx = dh_cell.cell_dof(idof).n_face_idx;
-                unsigned int nid = mesh_->tree->objects(dh_cell.dim())[mesh_->tree->obj_4_el()[dh_cell.elm_idx()]].nodes[dof_nface_idx];
+                unsigned int nid = mesh_->duplicate_nodes()->objects(dh_cell.dim())[mesh_->duplicate_nodes()->obj_4_el()[dh_cell.elm_idx()]].nodes[dof_nface_idx];
                 unsigned int node_dof_idx = node_dof_starts[nid]+loc_node_dof_count[dof_nface_idx];
                     
                 if (node_dofs[node_dof_idx] == INVALID_DOF)
@@ -245,6 +262,8 @@ void DOFHandlerMultiDim::update_local_dofs(unsigned int proc,
             }
             else if (dh_cell.cell_dof(idof).dim == dh_cell.dim()-1)
             {   // update edge dof
+                if (!distribute_edge_dofs) break;
+
                 unsigned int dof_nface_idx = dh_cell.cell_dof(idof).n_face_idx;
                 unsigned int eid = dh_cell.elm().side(dof_nface_idx)->edge_idx();
                 unsigned int edge_dof_idx = edge_dof_starts[eid]+loc_edge_dof_count[dof_nface_idx];
@@ -282,12 +301,14 @@ void DOFHandlerMultiDim::update_local_dofs(unsigned int proc,
             {
                 if (dof_indices[cell_starts[cell.local_idx()]+idof] == INVALID_DOF)
                 {   // update nodal dof
-                    unsigned int nid = mesh_->tree->objects(cell.dim())[mesh_->tree->obj_4_el()[cell.elm_idx()]].nodes[dof_nface_idx];
+                    unsigned int nid = mesh_->duplicate_nodes()->objects(cell.dim())[mesh_->duplicate_nodes()->obj_4_el()[cell.elm_idx()]].nodes[dof_nface_idx];
                     dof_indices[cell_starts[cell.local_idx()]+idof] = node_dofs[node_dof_starts[nid]+loc_node_dof_count[dof_nface_idx]];
                 }
                 loc_node_dof_count[dof_nface_idx]++;
             } else if (cell.cell_dof(idof).dim == cell.dim()-1)
             {
+                if (!distribute_edge_dofs) break;
+                
                 if (dof_indices[cell_starts[cell.local_idx()]+idof] == INVALID_DOF)
                 {   // update edge dof
                     unsigned int eid = cell.elm().side(dof_nface_idx)->edge_idx();
@@ -303,12 +324,12 @@ void DOFHandlerMultiDim::update_local_dofs(unsigned int proc,
 void DOFHandlerMultiDim::distribute_dofs(std::shared_ptr<DiscreteSpace> ds)
 {
 	// First check if dofs are already distributed.
-	OLD_ASSERT(ds_ == nullptr, "Attempt to distribute DOFs multiple times!");
+	ASSERT_PERMANENT(ds_ == nullptr).error("Attempt to distribute DOFs multiple times!");
     
     ds_ = ds;
 
     std::vector<LongIdx> node_dofs, node_dof_starts, edge_dofs, edge_dof_starts;
-    std::vector<short int> node_status(mesh_->tree->n_nodes(), INVALID_NFACE),
+    std::vector<short int> node_status(mesh_->duplicate_nodes()->n_nodes(), INVALID_NFACE),
                            edge_status(mesh_->n_edges(), INVALID_NFACE);
     std::vector<bool> update_cells(el_ds_->lsize(), false);
     unsigned int next_free_dof = 0;
@@ -335,7 +356,7 @@ void DOFHandlerMultiDim::distribute_dofs(std::shared_ptr<DiscreteSpace> ds)
         
         if (dof_dim == 0)
         {   // add dofs shared by nodes
-            unsigned int nid = mesh_->tree->objects(cell.dim())[mesh_->tree->obj_4_el()[cell.elm_idx()]].nodes[dof_nface_idx];
+            unsigned int nid = mesh_->duplicate_nodes()->objects(cell.dim())[mesh_->duplicate_nodes()->obj_4_el()[cell.elm_idx()]].nodes[dof_nface_idx];
             unsigned int node_dof_idx = node_dof_starts[nid]+loc_node_dof_count[dof_nface_idx];
                 
             switch (node_status[nid])
@@ -358,6 +379,8 @@ void DOFHandlerMultiDim::distribute_dofs(std::shared_ptr<DiscreteSpace> ds)
         }
         else if (dof_dim == cell.dim()-1)
         {   // add dofs shared by edges
+            if (!distribute_edge_dofs) break;
+
             unsigned int eid = cell.elm().side(dof_nface_idx)->edge_idx();
             unsigned int edge_dof_idx = edge_dof_starts[eid]+loc_edge_dof_count[dof_nface_idx];
             switch (edge_status[eid])
@@ -384,7 +407,7 @@ void DOFHandlerMultiDim::distribute_dofs(std::shared_ptr<DiscreteSpace> ds)
             dof_indices[cell_starts[cell.local_idx()]+idof] = next_free_dof++;
         }
         else
-            ASSERT(false).error("Unsupported dof n_face.");
+            ASSERT_PERMANENT(false).error("Unsupported dof n_face.");
       }
     }
     node_status.clear();
@@ -580,7 +603,7 @@ void DOFHandlerMultiDim::make_elem_partitioning()
     // create local array of neighbours
 	for (unsigned int inb=0; inb<mesh_->n_vb_neighbours(); inb++)
 	{
-		Neighbour *nb = &mesh_->vb_neighbours_[inb];
+		const Neighbour *nb = &mesh_->vb_neighbour(inb);
 		if ( el_is_local(nb->element().idx())
 				|| el_is_local(nb->side()->element().idx()) )
 			nb_4_loc.push_back(inb);
@@ -591,12 +614,12 @@ void DOFHandlerMultiDim::make_elem_partitioning()
         global_to_local_el_idx_[mesh_->get_el_4_loc()[iel]] = iel;
 	
 	// create array of local nodes
-	std::vector<bool> node_is_local(mesh_->tree->n_nodes(), false);
+	std::vector<bool> node_is_local(mesh_->duplicate_nodes()->n_nodes(), false);
 	for (auto cell : this->own_range())
     {
-      unsigned int obj_idx = mesh_->tree->obj_4_el()[cell.elm_idx()];
+      unsigned int obj_idx = mesh_->duplicate_nodes()->obj_4_el()[cell.elm_idx()];
       for (unsigned int nid=0; nid<cell.elm()->n_nodes(); nid++)
-        node_is_local[mesh_->tree->objects(cell.dim())[obj_idx].nodes[nid]] = true;
+        node_is_local[mesh_->duplicate_nodes()->objects(cell.dim())[obj_idx].nodes[nid]] = true;
     }
     
     // create array of local ghost cells
@@ -605,9 +628,9 @@ void DOFHandlerMultiDim::make_elem_partitioning()
       if (cell.proc() != el_ds_->myp())
       {
         bool has_local_node = false;
-        unsigned int obj_idx = mesh_->tree->obj_4_el()[cell.idx()];
+        unsigned int obj_idx = mesh_->duplicate_nodes()->obj_4_el()[cell.idx()];
         for (unsigned int nid=0; nid<cell->n_nodes(); nid++)
-          if (node_is_local[mesh_->tree->objects(cell->dim())[obj_idx].nodes[nid]])
+          if (node_is_local[mesh_->duplicate_nodes()->objects(cell->dim())[obj_idx].nodes[nid]])
           {
             has_local_node = true;
             break;
@@ -623,7 +646,7 @@ void DOFHandlerMultiDim::make_elem_partitioning()
     }
     for (auto nb : nb_4_loc)
     {
-        auto cell = mesh_->vb_neighbours_[nb].element();
+        auto cell = mesh_->vb_neighbour(nb).element();
         if (!el_is_local(cell.idx()) && find(ghost_4_loc.begin(), ghost_4_loc.end(), cell.idx()) == ghost_4_loc.end())
         {
             ghost_4_loc.push_back(cell.idx());
@@ -631,7 +654,7 @@ void DOFHandlerMultiDim::make_elem_partitioning()
             ghost_proc_el[cell.proc()].push_back(cell.idx());
             global_to_local_el_idx_[cell.idx()] = el_ds_->lsize() - 1 + ghost_4_loc.size();
         }
-        cell = mesh_->vb_neighbours_[nb].side()->element();
+        cell = mesh_->vb_neighbour(nb).side()->element();
         if (!el_is_local(cell.idx()) && find(ghost_4_loc.begin(), ghost_4_loc.end(), cell.idx()) == ghost_4_loc.end())
         {
             ghost_4_loc.push_back(cell.idx());
@@ -681,10 +704,26 @@ const DHCellAccessor DOFHandlerMultiDim::cell_accessor_from_element(unsigned int
 	return DHCellAccessor(this, map_it->second);
 }
 
+void DOFHandlerMultiDim::print_cell_dofs(stringstream &s, DHCellAccessor cell) const
+{
+    static std::vector<int> dofs(max_elem_dofs_);
+    auto ndofs = cell.get_dof_indices(dofs);
+    s << "-- cell " << cell.elm().input_id() << ": ";
+    for (unsigned int idof=0; idof<ndofs; idof++)
+    {
+        s << dofs[idof] << " ";
+        if (cell.cell_dof(idof).dim == 0) s << "(node " << cell.elm().node(cell.cell_dof(idof).n_face_idx).index() << ")";
+        s << ", ";
+    }
+    s << endl;
+}
+
 
 void DOFHandlerMultiDim::print() const {
+
+#ifdef FLOW123D_DEBUG_MESSAGES
+
     stringstream s;
-    std::vector<int> dofs(max_elem_dofs_);
     
     s << "DOFHandlerMultiDim structure:" << endl;
     s << "- is parallel: " << (is_parallel_?"true":"false") << endl;
@@ -692,21 +731,13 @@ void DOFHandlerMultiDim::print() const {
     s << "- global number of dofs: " << n_global_dofs_ << endl;
     s << "- number of locally owned cells: " << el_ds_->lsize() << endl;
     s << "- number of ghost cells: " << ghost_4_loc.size() << endl;
+
     s << "- dofs on locally owned cells:" << endl;
-    
-    for (auto cell : own_range())
-    {
-        auto ndofs = cell.get_dof_indices(dofs);
-        s << "-- cell " << cell.elm().idx() << ": ";
-        for (unsigned int idof=0; idof<ndofs; idof++) s << dofs[idof] << " "; s << endl;
-    }
+    for (auto cell : own_range()) print_cell_dofs(s, cell);
+
     s << "- dofs on ghost cells:" << endl;
-    for (auto cell : ghost_range())
-    {
-        auto ndofs = cell.get_dof_indices(dofs);
-        s << "-- cell " << cell.elm().idx() << ": ";
-        for (unsigned int idof=0; idof<ndofs; idof++) s << dofs[idof] << " "; s << endl;
-    }
+    for (auto cell : ghost_range()) print_cell_dofs(s, cell);
+
     s << "- locally owned dofs (" << lsize_ << "): ";
     for (unsigned int i=0; i<lsize_; i++) s << local_to_global_dof_idx_[i] << " "; s << endl;
     s << "- ghost dofs (" << local_to_global_dof_idx_.size() - lsize_ << "): ";
@@ -716,6 +747,9 @@ void DOFHandlerMultiDim::print() const {
     s << endl;
     
     printf("%s", s.str().c_str());
+
+#endif
+
 }
 
 
@@ -732,16 +766,16 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
   fe_idx_(component_idx)
 {
     // create discrete space, we assume equal type of FE on each cell.
-    ASSERT_DBG( dynamic_cast<EqualOrderDiscreteSpace *>(dh->ds().get()) != nullptr )
+    ASSERT( dynamic_cast<EqualOrderDiscreteSpace *>(dh->ds().get()) != nullptr )
                 .error("sub_handler can be used only with dof handler using EqualOrderDiscreteSpace!");
     FESystem<0> *fe_sys0 = dynamic_cast<FESystem<0>*>( dh->ds()->fe()[0_d].get() );
     FESystem<1> *fe_sys1 = dynamic_cast<FESystem<1>*>( dh->ds()->fe()[1_d].get() );
     FESystem<2> *fe_sys2 = dynamic_cast<FESystem<2>*>( dh->ds()->fe()[2_d].get() );
     FESystem<3> *fe_sys3 = dynamic_cast<FESystem<3>*>( dh->ds()->fe()[3_d].get() );
-    ASSERT_DBG( fe_sys0 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<0>!");
-    ASSERT_DBG( fe_sys1 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<1>!");
-    ASSERT_DBG( fe_sys2 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<2>!");
-    ASSERT_DBG( fe_sys3 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<3>!");
+    ASSERT( fe_sys0 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<0>!");
+    ASSERT( fe_sys1 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<1>!");
+    ASSERT( fe_sys2 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<2>!");
+    ASSERT( fe_sys3 != nullptr ).error("sub_handler assumes that dof handler uses FESystem<3>!");
     MixedPtr<FiniteElement> sub_mixed(fe_sys0->fe()[component_idx],
                                       fe_sys1->fe()[component_idx],
                                       fe_sys2->fe()[component_idx],
@@ -757,7 +791,7 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
         dynamic_cast<FESystemFunctionSpace*>( fe_sys2->function_space_.get() ),
         dynamic_cast<FESystemFunctionSpace*>( fe_sys3->function_space_.get() ) };
     for (unsigned int d=0; d<=3; d++)
-        ASSERT_DBG( fs[d] != nullptr ).error("Function space must be of type FESystemFunctionSpace!" );
+        ASSERT( fs[d] != nullptr ).error("Function space must be of type FESystemFunctionSpace!" );
     vector<unsigned int> sub_fe_dofs[4];
     for (unsigned int i=0; i<fe_sys0->n_dofs(); i++)
         if (fs[0]->dof_indices()[i].fe_index == component_idx) sub_fe_dofs[0].push_back(i);
@@ -773,6 +807,7 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
     // sub_local_indices maps local dofs of parent handler to local dofs of sub-handler
     vector<LongIdx> sub_local_indices(dh->local_to_global_dof_idx_.size(), INVALID_DOF);
     map<LongIdx,LongIdx> global_to_local_dof_idx;
+    vector<unsigned int> ghost_dof_proc; // vector of proc ids for ghost dofs
     // first add owned dofs to local_to_global_dof_idx_ and sub_local_indices
     for (auto cell : dh->local_range())
     {
@@ -790,11 +825,10 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
         }
     }
     lsize_ = local_to_global_dof_idx_.size();
-    // then do the same for ghost dofs and set dof_indices
-    for (auto cell : dh->local_range())
+    // then do the same for ghost dofs
+    for (auto cell : dh->ghost_range())
     {
         LocDofVec cell_dof_indices = cell.get_loc_dof_indices();
-        unsigned int idof = 0;
         for (auto sub_dof : sub_fe_dofs[cell.dim()])
         {
             if (sub_local_indices[cell_dof_indices[sub_dof]] == INVALID_DOF)
@@ -802,10 +836,19 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
                 sub_local_indices[cell_dof_indices[sub_dof]] = local_to_global_dof_idx_.size();
                 parent_dof_idx_.push_back(cell_dof_indices[sub_dof]);
                 // temporarily we keep the global dof idx of parent dh, we replace it later from the owning processor
+                global_to_local_dof_idx[parent_->local_to_global_dof_idx_[cell_dof_indices[sub_dof]]] = local_to_global_dof_idx_.size();
                 local_to_global_dof_idx_.push_back(parent_->local_to_global_dof_idx_[cell_dof_indices[sub_dof]]);
+                ghost_dof_proc.push_back(cell.elm().proc());
             }
-            dof_indices[cell_starts[cell.local_idx()]+idof++] = sub_local_indices[cell_dof_indices[sub_dof]];
         }
+    }
+    // set dof_indices
+    for (auto cell : dh->local_range())
+    {
+        LocDofVec cell_dof_indices = cell.get_loc_dof_indices();
+        unsigned int idof = 0;
+        for (auto sub_dof : sub_fe_dofs[cell.dim()])
+            dof_indices[cell_starts[cell.local_idx()]+idof++] = sub_local_indices[cell_dof_indices[sub_dof]];
     }
     
     dof_ds_ = std::make_shared<Distribution>(lsize_, PETSC_COMM_WORLD);
@@ -814,8 +857,8 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
     
     // shift dof indices
     if (loffset_ > 0)
-      for (unsigned int i=0; i<lsize_; i++)
-          local_to_global_dof_idx_[i] += loffset_;
+        for (unsigned int i=0; i<lsize_; i++)
+            local_to_global_dof_idx_[i] += loffset_;
     
     // communicate ghost values
     // first propagate from lower procs to higher procs and then vice versa
@@ -825,8 +868,7 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
         {
             if ((proc > el_ds_->myp()) == from_higher)
             { // receive dofs from master processor
-                vector<LongIdx> dofs;
-                receive_sub_ghost_dofs(proc, dofs);
+                receive_sub_ghost_dofs(proc, ghost_dof_proc, global_to_local_dof_idx);
             }
             else
                 send_sub_ghost_dofs(proc, global_to_local_dof_idx);
@@ -835,12 +877,13 @@ SubDOFHandlerMultiDim::SubDOFHandlerMultiDim(std::shared_ptr<DOFHandlerMultiDim>
 }
 
 
-void SubDOFHandlerMultiDim::receive_sub_ghost_dofs(unsigned int proc, vector<LongIdx> &dofs)
+void SubDOFHandlerMultiDim::receive_sub_ghost_dofs(unsigned int proc, vector<unsigned int> &ghost_dof_proc, map<LongIdx,LongIdx> &global_to_local_dof_idx)
 {
     // send number of ghost dofs required from the other processor
     vector<LongIdx> dof_indices;
+    vector<LongIdx> dofs;
     for (unsigned int i=lsize_; i<local_to_global_dof_idx_.size(); i++)
-        if (parent_->dof_ds_->get_proc(parent_->local_to_global_dof_idx_[parent_dof_idx_[i]]) == proc)
+        if (ghost_dof_proc[i-lsize_] == proc)
             dof_indices.push_back(parent_->local_to_global_dof_idx_[parent_dof_idx_[i]]);
     unsigned int n_ghosts = dof_indices.size();
     MPI_Send(&n_ghosts, 1, MPI_UNSIGNED, proc, 0, MPI_COMM_WORLD);
@@ -855,8 +898,12 @@ void SubDOFHandlerMultiDim::receive_sub_ghost_dofs(unsigned int proc, vector<Lon
     // update ghost dofs
     unsigned int idof = 0;
     for (unsigned int i=lsize_; i<local_to_global_dof_idx_.size(); i++)
-        if (parent_->dof_ds_->get_proc(parent_->local_to_global_dof_idx_[parent_dof_idx_[i]]) == proc)
-            local_to_global_dof_idx_[i] = dofs[idof++];
+        if (ghost_dof_proc[i-lsize_] == proc)
+        {
+            local_to_global_dof_idx_[i] = dofs[idof];
+            global_to_local_dof_idx[parent_->local_to_global_dof_idx_[parent_dof_idx_[i]]] = dofs[idof] - loffset_;
+            idof++;
+        }
 }
 
 
@@ -880,8 +927,8 @@ void SubDOFHandlerMultiDim::send_sub_ghost_dofs(unsigned int proc, const map<Lon
 
 void SubDOFHandlerMultiDim::update_subvector(const VectorMPI &vec, VectorMPI &subvec)
 {
-    ASSERT_DBG( vec.size() == parent_->local_to_global_dof_idx_.size() ).error("Incompatible parent vector in update_subvector()!");
-    ASSERT_DBG( subvec.size() == local_to_global_dof_idx_.size() ).error("Incompatible subvector in update_subvector()!");
+    ASSERT( vec.size() == parent_->local_to_global_dof_idx_.size() ).error("Incompatible parent vector in update_subvector()!");
+    ASSERT( subvec.size() == local_to_global_dof_idx_.size() ).error("Incompatible subvector in update_subvector()!");
     
     for (unsigned int i=0; i<parent_dof_idx_.size(); i++)
         subvec.set( i, vec.get(parent_dof_idx_[i]) );
@@ -890,8 +937,8 @@ void SubDOFHandlerMultiDim::update_subvector(const VectorMPI &vec, VectorMPI &su
 
 void SubDOFHandlerMultiDim::update_parent_vector(VectorMPI &vec, const VectorMPI &subvec)
 {
-    ASSERT_DBG( vec.size() == parent_->local_to_global_dof_idx_.size() ).error("Incompatible parent vector in update_subvector()!");
-    ASSERT_DBG( subvec.size() == local_to_global_dof_idx_.size() ).error("Incompatible subvector in update_subvector()!");
+    ASSERT( vec.size() == parent_->local_to_global_dof_idx_.size() ).error("Incompatible parent vector in update_subvector()!");
+    ASSERT( subvec.size() == local_to_global_dof_idx_.size() ).error("Incompatible subvector in update_subvector()!");
     
     for (unsigned int i=0; i<parent_dof_idx_.size(); i++)
         vec.set( parent_dof_idx_[i], subvec.get(i) );

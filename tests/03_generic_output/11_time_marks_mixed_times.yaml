@@ -3,27 +3,27 @@
 # Author: David Flanderka
 # Source for reference: qualitative (only output times are important)
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Tests correct functionality of balance output. Check fix of problem when both balances (water and mass) are
     performed in time step when is expected only one.
   mesh:
     mesh_file: ../00_mesh/square_1x1_str.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
-        a_tol: 1.0e-12
-        r_tol: 1.0e-12
+        a_tol: 1.0e-15    # 1.0e-12
+        r_tol: 1.0e-15    # 1.0e-12
     input_fields:
       - region: .BOUNDARY
         time: 0.0
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: (x-0.5)*y
+          value: (X[0]-0.5)*X[1]
       - region: .BOUNDARY
         time: 1.0                       # no output at time 1.0
         bc_pressure: !FieldFormula
-          value: 2*(x-0.5)*y
+          value: 2*(X[0]-0.5)*X[1]
 
     output:
       times:

@@ -9,13 +9,13 @@
 #
 #   See Test 44 for other details.
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Anisotropic molecular diffusion
   mesh:
     mesh_file: ../00_mesh/square_1x1_xy_28el.msh
     #mesh_file: ../00_mesh/square_1x1_xy.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     input_fields:
       - region: .BOUNDARY
         bc_type: dirichlet
@@ -29,10 +29,6 @@ problem: !Coupling_Sequential
             mesh_data_file: ref_out/44_P0_data_DG_write/flow_fields/flow_fields-000000.vtu
             field_name: anisotropy
             input_discretization: element_data
-        cross_section: !FieldFE
-            mesh_data_file: ref_out/44_P0_data_DG_write/flow_fields/flow_fields-000000.vtu
-            field_name: conductivity
-            input_discretization: node_data
     output:
       fields:
         - {field: conductivity, interpolation: P0_value}

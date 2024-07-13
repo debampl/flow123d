@@ -134,7 +134,7 @@ TEST(FeValues, test_normals) {
 
         auto ele = mesh.element_accessor(0);
         for(uint iside=0; iside <= ele.dim();iside++) {
-            DebugOut() << "ele ID: " << ele.index() << "side: " << iside;
+            DebugOut() << "ele ID: " << ele.input_id() << "side: " << iside;
             fe_values.reinit(*ele.side(iside));
             for(uint q=0; q<quad.size(); q++) {
                 //DebugOut() << fe_values.normal_vector(q);
@@ -156,7 +156,7 @@ TEST(FeValues, test_normals) {
 
         auto ele = mesh.element_accessor(1);
         for(uint iside=0; iside <= ele.dim();iside++) {
-            DebugOut() << "ele ID: " << ele.index() << "side: " << iside;
+            DebugOut() << "ele ID: " << ele.input_id() << "side: " << iside;
             fe_values.reinit(*ele.side(iside));
             for(uint q=0; q<quad.size(); q++) {
                 //DebugOut() << fe_values.normal_vector(q);
@@ -218,4 +218,5 @@ TEST(ElementMapping, element_map) {
         EXPECT_ARMA_EQ( arma::vec("0.25 0.25 0.25 0.25"), mapping.project_real_to_unit( arma::vec3("0 -0.5 -0.5"), map ) );
         //EXPECT_ARMA_EQ( arma::vec("0.1 0.2 0.3 0.4"), mapping.project_real_to_unit( arma::vec3("0.1 0.2 0.3"), map ) );
     }
+    Profiler::uninitialize();
 }

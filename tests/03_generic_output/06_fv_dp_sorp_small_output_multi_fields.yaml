@@ -4,7 +4,7 @@
 # Source for reference: qualitative
 
 # problem
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Transport 1D-2D (convection, dual porosity, sorption), output to multifields
   mesh:
@@ -16,7 +16,7 @@ problem: !Coupling_Sequential
           - 1d_upper
           - 1d_lower
           - 1d_left_branch
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     input_fields:
       - region: 1d_domain
         conductivity: 10
@@ -26,7 +26,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x+y
+          value: X[0]+X[1]
     output:
       fields:
         - pressure_p0

@@ -3,12 +3,12 @@
 # Author: Jan Stebel
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Interpolated boundary condition - small cube
   mesh:
     mesh_file: ../00_mesh/cube_1x1x1_frac21_shift.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-07
@@ -19,10 +19,10 @@ problem: !Coupling_Sequential
           mesh_data_file: ref_out/05_interpolation_large_cube/large_cube.msh
           field_name: piezo_head_p0
           interpolation: P0_intersection
+          is_boundary: true
       - region: BULK
         anisotropy: 1
         sigma: 0.5
-    n_schurs: 2
     output:
       fields:
         - piezo_head_p0

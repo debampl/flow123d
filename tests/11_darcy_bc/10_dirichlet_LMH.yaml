@@ -5,7 +5,7 @@
 #   analytical solution available: p=x*y, u=-K*(y,x)
 #   checked in Paraview
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test05 - Steady flow with Dirichlet/Neumann/Newton boundary condition
   mesh:
@@ -23,11 +23,11 @@ problem: !Coupling_Sequential
       - region: .right_x
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: y
+          value: X[1]
       - region: .top_y
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x
+          value: X[0]
       - region: .left_x
         bc_type: dirichlet
         bc_pressure: 0

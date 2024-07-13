@@ -22,6 +22,7 @@
 #include "fields/eval_points.hh"
 #include "fields/eval_subset.hh"
 #include "fem/dh_cell_accessor.hh"
+#include "create_processor.hh"
 #include "mesh/accessors.hh"
 
 
@@ -30,11 +31,11 @@
  */
 
 const unsigned int ElementCacheMap::undef_elem_idx = std::numeric_limits<unsigned int>::max();
-const unsigned int ElementCacheMap::simd_size_double = 4;
+//const unsigned int ElementCacheMap::simd_size_double = 4;
 
 
 ElementCacheMap::ElementCacheMap()
-: elm_idx_(CacheMapElementNumber::get(), ElementCacheMap::undef_elem_idx),
+: simd_size_double(bparser::get_simd_size()), elm_idx_(CacheMapElementNumber::get(), ElementCacheMap::undef_elem_idx),
   ready_to_reading_(false), element_eval_points_map_(nullptr), eval_point_data_(0),
   regions_starts_(2*ElementCacheMap::regions_in_chunk,ElementCacheMap::regions_in_chunk),
   element_starts_(2*ElementCacheMap::elements_in_chunk,ElementCacheMap::elements_in_chunk) {}
@@ -42,14 +43,14 @@ ElementCacheMap::ElementCacheMap()
 
 ElementCacheMap::~ElementCacheMap() {
     if (element_eval_points_map_!=nullptr) {
-        delete element_eval_points_map_;
+        delete[] element_eval_points_map_;
     }
 }
 
 
 void ElementCacheMap::init(std::shared_ptr<EvalPoints> eval_points) {
     this->eval_points_ = eval_points;
-    unsigned int ep_data_size = CacheMapElementNumber::get() * eval_points_->max_size();
+    unsigned int ep_data_size = eval_points_->max_size() * CacheMapElementNumber::get();
     eval_point_data_.resize(ep_data_size);
     element_eval_points_map_ = new int [ep_data_size];
     for (unsigned int i=0; i<ep_data_size; ++i)
@@ -65,18 +66,22 @@ void ElementCacheMap::create_patch() {
     unsigned int last_region_idx = -1;
     unsigned int last_element_idx = -1;
     unsigned int i_pos=0; // position in eval_point_data_
+    bool is_new_reg, is_new_elm;
 
     // Erase element data of previous step
     regions_starts_.reset();
     element_starts_.reset();
     element_to_map_.clear();
+    element_to_map_bdr_.clear();
     std::fill(elm_idx_.begin(), elm_idx_.end(), ElementCacheMap::undef_elem_idx);
 
     for (auto it=eval_point_data_tmp.begin(); it!=eval_point_data_tmp.end(); ++it) {
-        if (it->i_element_ != last_element_idx) { // new element
-            if (it->i_reg_ != last_region_idx) { // new region
+        is_new_reg = (it->i_reg_ != last_region_idx);
+        is_new_elm = is_new_reg || (it->i_element_ != last_element_idx);
+        if (is_new_elm) {
+            if (is_new_reg) {
                 unsigned int last_eval_point = i_pos-1; // set size of block by SIMD size
-                while (i_pos % ElementCacheMap::simd_size_double > 0) {
+                while (i_pos % simd_size_double > 0) {
                 	eval_point_data_.emplace_back( eval_point_data_[last_eval_point] );
                     i_pos++;
                 }
@@ -85,7 +90,10 @@ void ElementCacheMap::create_patch() {
                 last_region_idx = it->i_reg_;
             }
 			elm_idx_[element_starts_.temporary_size()] = it->i_element_;
-            element_to_map_[it->i_element_] = element_starts_.temporary_size();
+            if (it->i_reg_ % 2 == 1) // bulk region > to element_to_map_ (bulk)
+			    element_to_map_[it->i_element_] = element_starts_.temporary_size();
+            else // boundary region to element_to_map_bdr_ (boundary)
+                element_to_map_bdr_[it->i_element_] = element_starts_.temporary_size();
             element_starts_.emplace_back(i_pos);
             last_element_idx = it->i_element_;
         }
@@ -94,7 +102,7 @@ void ElementCacheMap::create_patch() {
         i_pos++;
     }
     unsigned int last_eval_point = i_pos-1; // set size of block of last region by SIMD size
-    while (i_pos % ElementCacheMap::simd_size_double > 0) {
+    while (i_pos % simd_size_double > 0) {
         eval_point_data_.emplace_back( eval_point_data_[last_eval_point] );
         i_pos++;
     }
@@ -104,6 +112,7 @@ void ElementCacheMap::create_patch() {
     regions_starts_.make_permanent();
     element_starts_.make_permanent();
     eval_point_data_.make_permanent();
+    set_of_regions_.clear();
 }
 
 

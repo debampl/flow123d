@@ -10,8 +10,14 @@
 #include "input/accessors.hh"
 #include "fields/equation_output.hh"
 #include "fields/field.hh"
+#include "fields/assembly_output.hh"
+#include "fields/assembly_observe.hh"
 #include "io/output_time_set.hh"
+#include "io/observe.hh"
 #include "input/flow_attribute_lib.hh"
+#include "fem/dofhandler.hh"
+#include "fem/discrete_space.hh"
+#include "fem/fe_p.hh"
 #include <memory>
 
 
@@ -23,17 +29,28 @@ IT::Record &EquationOutput::get_input_type() {
 
     static const IT::Selection &interpolation_sel =
         IT::Selection("Discrete_output", "Discrete type of output. Determines type of output data (element, node, native etc).")
-            .add_value(OutputTime::NODE_DATA,   "P1_average", "Node data / point data.")
-			.add_value(OutputTime::CORNER_DATA, "D1_value",   "Corner data.")
-			.add_value(OutputTime::ELEM_DATA,   "P0_value",   "Element data / cell data.")
-			.add_value(OutputTime::NATIVE_DATA, "Native",     "Native data (Flow123D data).")
+            .add_value(OutputTime::NODE_DATA,   "P1_average",
+                "Continuous linear interpolation. Evaluates average of FE basis functions at nodes."
+                "Continuous mesh: NodeData (GMSH) / PointData(VTK)."
+                "Discontinuous mesh: ElementNodeData (GMSH) / PointData(VTK)")
+			.add_value(OutputTime::CORNER_DATA, "D1_value",
+                "Piecewise linear interpolation (discontinuous between elements)."
+                "Continuous mesh: NodeData (GMSH) / PointData(VTK)."
+                "Discontinuous mesh: ElementNodeData (GMSH) / PointData(VTK)")
+			.add_value(OutputTime::ELEM_DATA,   "P0_value",
+                "Piecewise constant interpolation."
+                "Continuous mesh: ElementData (GMSH) / CellData(VTK)."
+                "Discontinuous mesh: ElementData (GMSH) / CellData(VTK)")
+			.add_value(OutputTime::NATIVE_DATA, "Native",
+                "Native data (Flow123d data). Corresponds to degrees of freedom of the internal FE approximation."
+                "Its main purpose is to read/write results repeatedly with minimal loss of accuracy.")
 			.close();
 
     static const IT::Record &field_output_setting =
         IT::Record("FieldOutputSetting", "Setting of the field output. The field name, output times, output interpolation (future).")
             .allow_auto_conversion("field")
-            .declare_key("field", IT::Parameter("output_field_selection"), IT::Default::obligatory(),
-                    "The field name (from selection).")
+            .declare_key("field", IT::String(), IT::Default::obligatory(),
+                    "The field name (of equation field or user field).")
             .declare_key("times", OutputTimeSet::get_input_type(), IT::Default::optional(),
                     "Output times specific to particular field.")
             .declare_key("interpolation", IT::Array( interpolation_sel ), IT::Default::read_time("Interpolation type of output data."),
@@ -62,6 +79,20 @@ IT::Record &EquationOutput::get_input_type() {
 }
 
 
+EquationOutput::EquationOutput()
+: FieldSet(), output_elem_data_assembly_(nullptr), output_node_data_assembly_(nullptr), output_corner_data_assembly_(nullptr),
+  observe_output_assembly_(nullptr) {
+    this->add_coords_field();
+}
+
+EquationOutput::~EquationOutput() {
+    if (output_elem_data_assembly_ != nullptr) delete output_elem_data_assembly_;
+    if (output_node_data_assembly_ != nullptr) delete output_node_data_assembly_;
+    if (output_corner_data_assembly_ != nullptr) delete output_corner_data_assembly_;
+    if (observe_output_assembly_ != nullptr) delete observe_output_assembly_;
+}
+
+
 
 const IT::Selection &EquationOutput::create_output_field_selection(const string &equation_name,
                                                                    const string &additional_description)
@@ -74,7 +105,7 @@ const IT::Selection &EquationOutput::create_output_field_selection(const string 
     for( FieldCommon * field : field_list)
     {
         //DebugOut().fmt("type for field: {}\n", field->name());
-        if ( !field->is_bc() && field->flags().match( FieldFlag::allow_output) )
+        if ( field->flags().match( FieldFlag::allow_output) )
         {
             string desc = "(($[" + field->units().format_latex()+"]$)) "; + "Output of: the field " + field->name() + " ";
             if (field->flags().match(FieldFlag::equation_input))
@@ -113,6 +144,25 @@ void EquationOutput::initialize(std::shared_ptr<OutputTime> stream, Mesh *mesh, 
     equation_type_ = tg.equation_mark_type();
     equation_fixed_type_ = tg.equation_fixed_mark_type();
     read_from_input(in_rec, tg);
+
+    { // DOF handler of element data output
+        MixedPtr<FE_P_disc> fe_p_disc(0);
+        dh_ = make_shared<DOFHandlerMultiDim>(*mesh_);
+	    std::shared_ptr<DiscreteSpace> ds = std::make_shared<EqualOrderDiscreteSpace>( mesh_, fe_p_disc);
+	    dh_->distribute_dofs(ds);
+    }
+
+    { // DOF handler of node / corner data output
+        MixedPtr<FE_P_disc> fe_p_disc(1);
+        dh_node_ = make_shared<DOFHandlerMultiDim>(*mesh_);
+	    std::shared_ptr<DiscreteSpace> ds = std::make_shared<EqualOrderDiscreteSpace>( mesh_, fe_p_disc);
+	    dh_node_->distribute_dofs(ds);
+    }
+
+    output_elem_data_assembly_ = new GenericAssembly< AssemblyOutputElemData >(this, this);
+    output_node_data_assembly_ = new GenericAssembly< AssemblyOutputNodeData >(this, this);
+    output_corner_data_assembly_ = new GenericAssembly< AssemblyOutputNodeData >(this, this);
+    observe_output_assembly_ = new GenericAssemblyObserve< AssemblyObserveOutput >(this, this->observe_fields_, stream_->observe( mesh_ ));
 }
 
 
@@ -146,46 +196,58 @@ void EquationOutput::read_from_input(Input::Record in_rec, const TimeGovernor & 
     }
     auto fields_array = in_rec.val<Input::Array>("fields");
     for(auto it = fields_array.begin<Input::Record>(); it != fields_array.end(); ++it) {
-        string field_name = it -> val< Input::FullEnum >("field");
-        FieldCommon *found_field = field(field_name);
-
-        Input::Array interpolations;
-        OutputTime::DiscreteSpaceFlags interpolation = OutputTime::empty_discrete_flags();
-        if (it->opt_val("interpolation", interpolations)) {
-            // process interpolations
-            for(auto it_interp = interpolations.begin<OutputTime::DiscreteSpace>(); it_interp != interpolations.end(); ++it_interp) {
-                interpolation[ *it_interp ] = true;
-            }
-        } else {
-            OutputTime::set_discrete_flag(interpolation, found_field->get_output_type());
-        }
-        Input::Array field_times_array;
-        if (it->opt_val("times", field_times_array)) {
-            OutputTimeSet field_times;
-            field_times.read_from_input(field_times_array, tg);
-            field_output_times_[field_name].output_set_ = field_times;
-        } else {
-            field_output_times_[field_name].output_set_ = common_output_times_;
-        }
-        field_output_times_[field_name].space_flags_ = interpolation;
-        // Add init time as the output time for every output field.
-        field_output_times_[field_name].output_set_.add(tg.init_time(), equation_fixed_type_);
+        this->init_field_item(it, tg);
     }
     auto observe_fields_array = in_rec.val<Input::Array>("observe_fields");
     for(auto it = observe_fields_array.begin<Input::FullEnum>(); it != observe_fields_array.end(); ++it) {
         observe_fields_.insert(string(*it));
     }
 
-    // register interpolation type of fields to OutputStream
-    for(FieldCommon * field : this->field_list) {
-        auto output_types = field_output_times_[field->name()].space_flags_;
-        for (uint i=0; i<OutputTime::N_DISCRETE_SPACES; ++i)
-    	    if (output_types[i]) used_interpolations_.insert( OutputTime::DiscreteSpace(i) );
+}
+
+void EquationOutput::init_field_item(Input::Iterator<Input::Record> it, const TimeGovernor & tg) {
+    string field_name = it -> val< std::string >("field");
+    FieldCommon *found_field = field(field_name);
+    ASSERT_PERMANENT_PTR(found_field)(field_name).error("Field doesn't exist in equation!\n"); // TODO: Change to exception.
+
+    Input::Array interpolations;
+    OutputTime::DiscreteSpaceFlags interpolation = OutputTime::empty_discrete_flags();
+    if (it->opt_val("interpolation", interpolations)) {
+        // process interpolations
+        for(auto it_interp = interpolations.begin<OutputTime::DiscreteSpace>(); it_interp != interpolations.end(); ++it_interp) {
+            interpolation[ *it_interp ] = true;
+        }
+    } else {
+        OutputTime::set_discrete_flag(interpolation, found_field->get_output_type());
+    }
+    Input::Array field_times_array;
+    FieldOutputConfig field_config;
+    if (it->opt_val("times", field_times_array)) {
+        OutputTimeSet field_times;
+        field_times.read_from_input(field_times_array, tg);
+        field_config.output_set_ = field_times;
+    } else {
+        field_config.output_set_ = common_output_times_;
+    }
+    field_config.space_flags_ = interpolation;
+    // Add init time as the output time for every output field.
+    field_config.output_set_.add(tg.init_time(), equation_fixed_type_);
+    // register interpolation types of fields to OutputStream
+    for (uint i=0; i<OutputTime::N_DISCRETE_SPACES; ++i)
+	    if (interpolation[i]) used_interpolations_.insert( OutputTime::DiscreteSpace(i) );
+    // Set output configuration to field_output_times_
+    if (found_field->is_multifield()) {
+        for (uint i_comp=0; i_comp<found_field->n_comp(); ++i_comp) {
+            field_output_times_[ found_field->full_comp_name(i_comp) ] = field_config;
+        }
+    } else {
+        field_output_times_[field_name] = field_config;
     }
 }
 
 bool EquationOutput::is_field_output_time(const FieldCommon &field, TimeStep step) const
 {
+    if ( !field.get_flags().match(FieldFlag::allow_output) ) return false;
     auto &marks = TimeGovernor::marks();
     auto field_times_it = field_output_times_.find(field.name());
     if (field_times_it == field_output_times_.end()) return false;
@@ -210,17 +272,82 @@ void EquationOutput::output(TimeStep step)
 
     this->make_output_mesh( stream_->is_parallel() );
 
-    for(FieldCommon * field : this->field_list) {
-
-        if ( field->flags().match( FieldFlag::allow_output) ) {
-            if (is_field_output_time(*field, step)) {
-                field->field_output(stream_, field_output_times_[field->name()].space_flags_);
-            }
-            // observe output
-            if (observe_fields_.find(field->name()) != observe_fields_.end()) {
-                field->observe_output( observe_ptr );
+    // NODE_DATA
+    {
+        FieldSet used_fields;
+        for(FieldListAccessor f_acc : this->fields_range()) {
+            if (is_field_output_time( *(f_acc.field()), step) && field_output_times_[f_acc->name()].space_flags_[OutputTime::NODE_DATA]) {
+                f_acc->set_output_data_cache(OutputTime::NODE_DATA, stream_);
+                used_fields += *(f_acc.field());
             }
         }
+        if (used_fields.size()>0) {
+            auto mixed_assmbly = output_node_data_assembly_->multidim_assembly();
+            mixed_assmbly[1_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[2_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[3_d]->set_output_data(used_fields, stream_);
+            output_node_data_assembly_->assemble(this->dh_node_);
+        }
+    }
+
+    // CORNER_DATA
+    {
+        FieldSet used_fields;
+        for(FieldListAccessor f_acc : this->fields_range()) {
+            if (is_field_output_time( *(f_acc.field()), step) && field_output_times_[f_acc->name()].space_flags_[OutputTime::CORNER_DATA]) {
+                f_acc->set_output_data_cache(OutputTime::CORNER_DATA, stream_);
+                used_fields += *(f_acc.field());
+            }
+        }
+        if (used_fields.size()>0) {
+            auto mixed_assmbly = output_corner_data_assembly_->multidim_assembly();
+            mixed_assmbly[1_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[2_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[3_d]->set_output_data(used_fields, stream_);
+            output_corner_data_assembly_->assemble(this->dh_node_);
+        }
+    }
+
+    // ELEM_DATA
+    {
+        FieldSet used_fields;
+        for (FieldListAccessor f_acc : this->fields_range()) {
+            if (is_field_output_time( *(f_acc.field()), step) && field_output_times_[f_acc->name()].space_flags_[OutputTime::ELEM_DATA]) {
+                f_acc->set_output_data_cache(OutputTime::ELEM_DATA, stream_);
+                used_fields += *(f_acc.field());
+            }
+        }
+        if (used_fields.size()>0) {
+            auto mixed_assmbly = output_elem_data_assembly_->multidim_assembly();
+            mixed_assmbly[1_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[2_d]->set_output_data(used_fields, stream_);
+            mixed_assmbly[3_d]->set_output_data(used_fields, stream_);
+            output_elem_data_assembly_->assemble(this->dh_);
+        }
+    }
+
+    // NATIVE_DATA
+    for(FieldListAccessor f_acc : this->fields_range()) {
+        if (is_field_output_time( *(f_acc.field()), step) && field_output_times_[f_acc->name()].space_flags_[OutputTime::NATIVE_DATA]) {
+            f_acc->field_output(stream_, OutputTime::NATIVE_DATA);
+        }
+    }
+
+    // observe output
+    if (observe_fields_.size() > 0) {
+        for (auto observe_field : this->observe_fields_) {
+            auto *field_ptr = this->field(observe_field);
+            if ( field_ptr->flags().match( FieldFlag::allow_output) ) {
+                if (field_ptr->is_multifield()) {
+                    for (uint i_comp=0; i_comp<field_ptr->n_comp(); ++i_comp) {
+                        observe_ptr->prepare_compute_data(field_ptr->full_comp_name(i_comp), step.end(), field_ptr->n_shape());
+                    }
+                } else {
+                    observe_ptr->prepare_compute_data(field_ptr->name(), field_ptr->time(), field_ptr->n_shape());
+                }
+            }
+        }
+        observe_output_assembly_->assemble(this->dh_);
     }
 }
 
@@ -299,14 +426,16 @@ typename OutputMeshBase::ErrorControlFieldFunc EquationOutput::select_error_cont
         // throw input exception if the field is not scalar
         if( typeid(*field) == typeid(Field<3,FieldValue<3>::Scalar>) ) {
 
-        	Field<3,FieldValue<3>::Scalar>* error_control_field = static_cast<Field<3,FieldValue<3>::Scalar>*>(field);
-            DebugOut() << "Error control field for output mesh set: " << error_control_field_name << ".";
-            auto lambda_function =
-                [error_control_field](const Armor::array &point_list, const ElementAccessor<OutputMeshBase::spacedim> &elm, std::vector<double> &value_list)->void
-                { error_control_field->value_list(point_list, elm, value_list); };
+        	ASSERT_PERMANENT(false)(error_control_field_name).error("Setting of error control field is not supported yet!\n");
 
-            OutputMeshBase::ErrorControlFieldFunc func = lambda_function;
-            return func;
+//        	Field<3,FieldValue<3>::Scalar>* error_control_field = static_cast<Field<3,FieldValue<3>::Scalar>*>(field);
+//            DebugOut() << "Error control field for output mesh set: " << error_control_field_name << ".";
+//            auto lambda_function =
+//                [error_control_field](const Armor::array &point_list, const ElementAccessor<OutputMeshBase::spacedim> &elm, std::vector<double> &value_list)->void
+//                { error_control_field->value_list(point_list, elm, value_list); };
+//
+//            OutputMeshBase::ErrorControlFieldFunc func = lambda_function;
+//            return func;
 
         }
         else{

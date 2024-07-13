@@ -3,12 +3,12 @@
 # Author: David Flanderka
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test of input data mesh with equivalent_mesh interpolation (without Nodes and Elements sections)
   mesh:
     mesh_file: ../00_mesh/rectangle_6_el.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         r_tol: 1.0e-12
@@ -21,17 +21,20 @@ problem: !Coupling_Sequential
           mesh_data_file: ./28_mesh_data.msh
           field_name: sigma
           interpolation: identic_mesh
-          default_value: 0.05
+        anisotropy: !FieldFE
+          mesh_data_file: ./28_mesh_data.msh
+          field_name: anisotropy
+          interpolation: identic_mesh
       - region: .1d
         bc_type: dirichlet
         bc_pressure: !FieldFormula
           value: 0.1*x
-    n_schurs: 2
     output:
       fields:
         - pressure_p0
         - velocity_p0
         - sigma
+        - anisotropy
     output_stream:
       file: ./flow.vtk
       format: !vtk

@@ -79,10 +79,9 @@
 #include "input/accessors.hh"                          // for Record
 #include "la/local_system.hh"
 #include "la/distribution.hh"                          // for Distribution
-#include "system/exc_common.hh"                        // for ExcAssertMsg
 #include "system/exceptions.hh"                        // for ExcAssertMsg::...
 #include "system/system.hh"                            // for chkerr
-#include "system/global_defs.h"                        // for OLD_ASSERT, msg
+#include "system/asserts.hh"                           // for ASSERT, msg
 
 namespace Input { namespace Type { class Abstract; } }
 
@@ -138,6 +137,7 @@ public:
 
         r_tol_ = default_r_tol_;
         a_tol_ = default_a_tol_;
+        d_tol_ = default_d_tol_;
         max_it_ = default_max_it_;
     };
 
@@ -145,7 +145,7 @@ public:
      * Copy constructor.
      */
     LinSys(LinSys &other)
-    : r_tol_(other.r_tol_), a_tol_(other.a_tol_), max_it_(other.max_it_), comm_(other.comm_), status_(other.status_),
+    : r_tol_(other.r_tol_), a_tol_(other.a_tol_), d_tol_(other.d_tol_), max_it_(other.max_it_), comm_(other.comm_), status_(other.status_),
       lsize_( other.rows_ds_->lsize() ), size_(other.size_), rows_ds_(other.rows_ds_), symmetric_(other.symmetric_),
       positive_definite_(other.positive_definite_), negative_definite_( other.negative_definite_ ),
       spd_via_symmetric_general_(other.spd_via_symmetric_general_), matrix_changed_(other.matrix_changed_),
@@ -153,7 +153,7 @@ public:
       globalSolution_(other.globalSolution_), in_rec_(other.in_rec_)
 
     {
-    	OLD_ASSERT( false, "Using copy constructor of LinSys is not allowed!");
+    	ASSERT_PERMANENT( false ).error("Using copy constructor of LinSys is not allowed!");
     	set_solution(other.v_solution_);
     };
 
@@ -186,7 +186,7 @@ public:
      */
     virtual const Mat *get_matrix()
     {
-    	OLD_ASSERT( false, "Function get_matrix is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function get_matrix is not implemented for linsys type\n.");
         return NULL;
     }
 
@@ -202,7 +202,7 @@ public:
      */
     virtual const Vec *get_rhs()
     {
-    	OLD_ASSERT( false, "Function get_rhs is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function get_rhs is not implemented for linsys type\n.");
         return NULL;
     }
     
@@ -225,7 +225,7 @@ public:
      * if not set we use the value provided to this method and finally the default values are
      * set by the call of this method in the constructor.
      */
-    virtual void set_tolerances(double  r_tol, double a_tol, unsigned int max_it) = 0;
+    virtual void set_tolerances(double  r_tol, double a_tol, double d_tol, unsigned int max_it) = 0;
 
     /**
      * Returns true if the system matrix has changed since the last solve.
@@ -245,7 +245,7 @@ public:
      */
     virtual PetscErrorCode set_matrix(Mat&, MatStructure)
     {
-    	OLD_ASSERT( false, "Function set_matrix is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function set_matrix is not implemented for linsys type \n.");
         return 0;
     }
 
@@ -254,7 +254,7 @@ public:
      */
     virtual PetscErrorCode set_rhs(Vec&)
     {
-    	OLD_ASSERT( false, "Function set_rhs is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function set_rhs is not implemented for linsys type \n.");
         return 0;
     }
 
@@ -263,7 +263,7 @@ public:
      */
     virtual PetscErrorCode mat_zero_entries()
     {
-    	OLD_ASSERT( false, "Function mat_zero_entries is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function mat_zero_entries is not implemented for linsys type \n.");
     	return 0;
     }
 
@@ -272,7 +272,7 @@ public:
      */
     virtual PetscErrorCode rhs_zero_entries()
     {
-    	OLD_ASSERT( false, "Function vec_zero_entries is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function vec_zero_entries is not implemented for linsys type \n.");
     	return 0;
     }
 
@@ -332,7 +332,7 @@ public:
      */
     virtual void start_allocation()
     {
-    	OLD_ASSERT( false, "Function start_allocation is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function start_allocation is not implemented for linsys type \n.");
     }
 
     /**
@@ -340,7 +340,7 @@ public:
      */
     virtual void start_add_assembly()
     {
-    	OLD_ASSERT( false, "Function start_add_assembly is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function start_add_assembly is not implemented for linsys type \n.");
     }
 
     /**
@@ -348,7 +348,7 @@ public:
      */
     virtual void start_insert_assembly()
     {
-    	OLD_ASSERT( false, "Function start_insert_assembly is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function start_insert_assembly is not implemented for linsys type \n.");
     }
 
     /**
@@ -632,7 +632,7 @@ public:
      */
     virtual void view(string)
     {
-    	OLD_ASSERT( false, "Function view is not implemented for linsys type %s \n.", typeid(*this).name() );
+    	ASSERT_PERMANENT( false )(typeid(*this).name()).error("Function view is not implemented for linsys type %s \n.");
     }
 
     /**
@@ -641,7 +641,7 @@ public:
     virtual void set_from_input(const Input::Record in_rec)
     {
         in_rec_ = in_rec;
-        set_tolerances(default_r_tol_, default_a_tol_, default_max_it_);
+        set_tolerances(default_r_tol_, default_a_tol_, default_d_tol_, default_max_it_);
     }
 
     /**
@@ -659,10 +659,12 @@ protected:
     // Default values initialized in constructor
     static constexpr double         default_r_tol_ = 1e-7;
     static constexpr double         default_a_tol_ = 1e-11;
+    static constexpr double         default_d_tol_ = 10000;
     static constexpr unsigned int   default_max_it_ = 1000;
 
     double           r_tol_;  ///< relative tolerance of linear solver
     double      	 a_tol_;  ///< absolute tolerance of linear solver
+    double      	 d_tol_;  ///< tolerance for divergence of linear solver
     unsigned int     max_it_; ///< maximum number of iterations of linear solver
 
     MPI_Comm         comm_;

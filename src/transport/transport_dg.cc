@@ -27,7 +27,6 @@
 #include "fem/fe_rt.hh"
 #include "fem/dh_cell_accessor.hh"
 #include "fields/field_fe.hh"
-#include "fields/fe_value_handler.hh"
 #include "la/linsys_PETSC.hh"
 #include "coupling/balance.hh"
 #include "coupling/generic_assembly.hh"
@@ -79,6 +78,7 @@ template<class Model>
 const Record & TransportDG<Model>::get_input_type() {
     std::string equation_name = std::string(Model::ModelEqData::name()) + "_DG";
     return Model::get_input_type("DG", "Discontinuous Galerkin (DG) solver")
+        .copy_keys(EquationBase::user_fields_template(equation_name))
         .declare_key("solver", LinSys_PETSC::get_input_type(), Default("{}"),
                 "Solver for the linear system.")
         .declare_key("input_fields", Array(
@@ -141,59 +141,8 @@ TransportDG<Model>::EqFields::EqFields() : Model::ModelEqFields()
     // add all input fields to the output list
     output_fields += *this;
 
-}
-
-
-
-// return the ratio of longest and shortest edge
-template<class Model>
-double TransportDG<Model>::EqData::elem_anisotropy(ElementAccessor<3> e) const
-{
-    double h_max = 0, h_min = numeric_limits<double>::infinity();
-    for (unsigned int i=0; i<e->n_nodes(); i++)
-        for (unsigned int j=i+1; j<e->n_nodes(); j++)
-        {
-            double dist = arma::norm(*e.node(i) - *e.node(j));
-            h_max = max(h_max, dist);
-            h_min = min(h_min, dist);
-        }
-    return h_max/h_min;
-}
-
-
-
-template<class Model>
-void TransportDG<Model>::EqData::set_DG_parameters_boundary(Side side,
-            const int K_size,
-            const vector<arma::mat33> &K,
-            const double flux,
-            const arma::vec3 &normal_vector,
-            const double alpha,
-            double &gamma)
-{
-    double delta = 0, h = 0;
-
-    // calculate the side diameter
-    if (side.dim() == 0)
-    {
-        h = 1;
-    }
-    else
-    {
-        for (unsigned int i=0; i<side.n_nodes(); i++)
-            for (unsigned int j=i+1; j<side.n_nodes(); j++) {
-                double dist = arma::norm(*side.node(i) - *side.node(j));
-                h = max(h, dist);
-            }
-
-    }
-
-    // delta is set to the average value of Kn.n on the side
-    for (int k=0; k<K_size; k++)
-        delta += dot(K[k]*normal_vector,normal_vector);
-    delta /= K_size;
-
-    gamma = 0.5*fabs(flux) + alpha/h*delta*elem_anisotropy(side.element());
+    this->add_coords_field();
+    this->set_default_fieldset();
 }
 
 
@@ -202,7 +151,8 @@ template<typename Model>
 TransportDG<Model>::TransportDG(Mesh & init_mesh, const Input::Record in_rec)
         : Model(init_mesh, in_rec),
           input_rec(in_rec),
-          allocation_done(false)
+          allocation_done(false),
+          mass_assembly_(nullptr)
 {
     // Can not use name() + "constructor" here, since START_TIMER only accepts const char *
     // due to constexpr optimization.
@@ -212,8 +162,7 @@ TransportDG<Model>::TransportDG(Mesh & init_mesh, const Input::Record in_rec)
 
     eq_data_ = make_shared<EqData>();
     eq_fields_ = make_shared<EqFields>();
-    eq_fields_->add_coords_field();
-    this->eq_fieldset_ = eq_fields_.get();
+    this->eq_fieldset_ = eq_fields_;
     Model::init_balance(in_rec);
 
 
@@ -247,19 +196,20 @@ void TransportDG<Model>::initialize()
     eq_data_->balance_ = this->balance();
     eq_fields_->initialize();
 
-    // DG stabilization parameters on boundary edges
-    eq_data_->gamma.resize(eq_data_->n_substances());
-    for (unsigned int sbi=0; sbi<eq_data_->n_substances(); sbi++)
-        eq_data_->gamma[sbi].resize(Model::mesh_->boundary_.size());
-
     // Resize coefficient arrays
     eq_data_->max_edg_sides = max(Model::mesh_->max_edge_sides(1), max(Model::mesh_->max_edge_sides(2), Model::mesh_->max_edge_sides(3)));
     ret_sources.resize(eq_data_->n_substances());
     ret_sources_prev.resize(eq_data_->n_substances());
 
+    Input::Array user_fields_arr;
+    if (input_rec.opt_val("user_fields", user_fields_arr)) {
+       	this->init_user_fields(user_fields_arr, eq_fields_->output_fields);
+    }
+
     eq_data_->output_vec.resize(eq_data_->n_substances());
     eq_fields_->output_field.set_components(eq_data_->substances_.names());
     eq_fields_->output_field.set_mesh(*Model::mesh_);
+    eq_fields_->output_fields.set_mesh(*Model::mesh_);
     eq_fields_->output_type(OutputTime::CORNER_DATA);
 
     eq_fields_->output_field.setup_components();
@@ -327,13 +277,6 @@ void TransportDG<Model>::initialize()
     // initialization of balance object
     Model::balance_->allocate(eq_data_->dh_->distr()->lsize(), mass_assembly_->eval_points()->max_size());
 
-    int qsize = mass_assembly_->eval_points()->max_size();
-    eq_data_->dif_coef.resize(eq_data_->n_substances());
-    for (unsigned int sbi=0; sbi<eq_data_->n_substances(); sbi++)
-    {
-        eq_data_->dif_coef[sbi].resize(qsize);
-    }
-
     eq_fields_->init_condition.setup_components();
     for (unsigned int sbi=0; sbi<eq_data_->n_substances(); sbi++)
     {
@@ -347,39 +290,49 @@ TransportDG<Model>::~TransportDG()
 {
     delete Model::time_;
 
-    if (eq_data_->gamma.size() > 0) {
+    if (rhs.size() > 0) {
         // initialize called
 
         for (unsigned int i=0; i<eq_data_->n_substances(); i++)
         {
-            delete eq_data_->ls[i];
-            delete eq_data_->ls_dt[i];
+            if (eq_data_->ls != nullptr) {
+                delete eq_data_->ls[i];
+                delete eq_data_->ls_dt[i];
+            }
 
-            if (stiffness_matrix[i])
-                chkerr(MatDestroy(&stiffness_matrix[i]));
-            if (mass_matrix[i])
-                chkerr(MatDestroy(&mass_matrix[i]));
-            if (rhs[i])
-            	chkerr(VecDestroy(&rhs[i]));
-            if (mass_vec[i])
-            	chkerr(VecDestroy(&mass_vec[i]));
-            if (eq_data_->ret_vec[i])
-            	chkerr(VecDestroy(&eq_data_->ret_vec[i]));
+            if (stiffness_matrix.size() > 0) {
+                if (stiffness_matrix[i])
+                    chkerr(MatDestroy(&stiffness_matrix[i]));
+                if (mass_matrix[i])
+                    chkerr(MatDestroy(&mass_matrix[i]));
+                if (rhs[i])
+                	chkerr(VecDestroy(&rhs[i]));
+                if (mass_vec[i])
+                	chkerr(VecDestroy(&mass_vec[i]));
+                if (eq_data_->ret_vec[i])
+                	chkerr(VecDestroy(&eq_data_->ret_vec[i]));
+            }
         }
-        delete[] eq_data_->ls;
-        delete[] eq_data_->ls_dt;
+        if (eq_data_->ls != nullptr) {
+            delete[] eq_data_->ls;
+            delete[] eq_data_->ls_dt;
+            eq_data_->ls = nullptr;
+        }
         //delete[] stiffness_matrix;
         //delete[] mass_matrix;
         //delete[] rhs;
         //delete[] mass_vec;
         //delete[] ret_vec;
 
-        delete mass_assembly_;
-        delete stiffness_assembly_;
-        delete sources_assembly_;
-        delete bdr_cond_assembly_;
-        delete init_assembly_;
+        if (mass_assembly_ != nullptr) {
+            delete mass_assembly_;
+            delete stiffness_assembly_;
+            delete sources_assembly_;
+            delete bdr_cond_assembly_;
+            delete init_assembly_;
+        }
     }
+
 
 }
 
@@ -683,14 +636,6 @@ void TransportDG<Model>::set_initial_condition()
 
 
 template<class Model>
-void TransportDG<Model>::get_par_info(LongIdx * &el_4_loc, Distribution * &el_ds)
-{
-    el_4_loc = Model::mesh_->get_el_4_loc();
-    el_ds = Model::mesh_->get_el_ds();
-}
-
-
-template<class Model>
 void TransportDG<Model>::update_after_reactions(bool solution_changed)
 {
     if (solution_changed)
@@ -719,12 +664,6 @@ void TransportDG<Model>::update_after_reactions(bool solution_changed)
     // update mass_vec for the case that mass matrix changes in next time step
     for (unsigned int sbi=0; sbi<eq_data_->n_substances(); ++sbi)
         MatMult(*(eq_data_->ls_dt[sbi]->get_matrix()), eq_data_->ls[sbi]->get_solution(), mass_vec[sbi]);
-}
-
-template<class Model>
-LongIdx *TransportDG<Model>::get_row_4_el()
-{
-    return Model::mesh_->get_row_4_el();
 }
 
 

@@ -33,6 +33,7 @@ BasicFactors::BasicFactors() {
 			{ "*K",  { 1,           UnitSI().K() } },
 			{ "*cd", { 1,           UnitSI().cd() } },
 			{ "*mol",{ 1,           UnitSI().mol() } },
+			{ "md",  { 1,			UnitSI().md()  } },		// m^{-d} where d is the element dimension
 
 			{ "*N",  { 1,           UnitSI().m().kg().s(-2) } },
 			{ "*J",  { 1,           UnitSI().m(2).kg().s(-2) } },
@@ -173,12 +174,12 @@ double UnitConverter::convert(std::string actual_unit) {
 void UnitConverter::add_converted_unit(Factor factor, UnitData &unit_data, UnitSI &unit_si, double &coef) {
 	if (factor.basic_) {
 		std::map<std::string, struct BasicFactors::DerivedUnit>::const_iterator it = UnitConverter::basic_factors.units_map_.find(factor.factor_);
-		ASSERT_DBG(it != UnitConverter::basic_factors.units_map_.end())(factor.factor_).error("Undefined unit.");
+		ASSERT(it != UnitConverter::basic_factors.units_map_.end())(factor.factor_).error("Undefined unit.");
 		coef *= pow(it->second.coef_, factor.exponent_);
 		unit_si.multiply(it->second.unit_, factor.exponent_);
 	} else {
 		std::map<std::string, struct Formula>::iterator it = unit_data.find(factor.factor_);
-		ASSERT_DBG(it != unit_data.end())(factor.factor_).error("Undefined unit.");
+		ASSERT(it != unit_data.end())(factor.factor_).error("Undefined unit.");
 		coef *= pow(it->second.coef_, factor.exponent_);
 		for( std::vector<struct Factor>::iterator in_it = it->second.factors_.begin(); in_it !=it->second.factors_.end(); ++in_it ) {
 			Factor new_factor = Factor(in_it->factor_, in_it->exponent_*factor.exponent_, in_it->basic_ );

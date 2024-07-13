@@ -1,9 +1,9 @@
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test14 - 2D transport with time variable boundary
   mesh:
     mesh_file: ../00_mesh/rectangle_1x0.2_1080el.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-12
@@ -14,8 +14,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x
-    n_schurs: 2
+          value: X[0]
     output:
       fields:
         - pressure_p0

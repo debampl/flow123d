@@ -77,6 +77,10 @@ public:
 			<< "in the input file: " << EI_MeshFile::qval);
 	DECLARE_EXCEPTION(ExcWrongExtension,
 			<< "Unsupported extension " << EI_FileExtension::qval << " of the input file: " << EI_MeshFile::qval);
+  DECLARE_EXCEPTION(ExcWrongComponentsCount,
+			<< "Wrong number of components of field " << EI_FieldName::qval
+      << " at time " << EI_Time::val
+      << " in the input file: " << EI_MeshFile::qval);
 
 
     /***********************************
@@ -185,24 +189,27 @@ public:
      *  @param component_idx component index of MultiField; 0 for single component fields.
 	 */
     template<typename T>
-    typename ElementDataCache<T>::ComponentDataPtr get_element_data( unsigned int n_entities, unsigned int n_components,
-    		bool boundary_domain, unsigned int component_idx);
+    typename ElementDataCache<T>::CacheData get_element_data(
+            MeshDataHeader header, unsigned int expected_n_entities,
+            unsigned int expected_n_components, unsigned int boundary_begin);
 
     /**
-     * Returns vector of boundary or bulk element ids by parameter boundary_domain
+     * Set ID vectors from a different mesh.
+     * Must be set in order to determine for which IDs the GMSH reader should read the data.
+     * Could possibly read just a subset.
      */
-    std::vector<int> const & get_element_vector(bool boundary_domain);
+    void set_element_ids(const Mesh &mesh);
+
+    /**
+     * Returns vector of boundary or bulk element IDs to read.
+     * Used by GMSH reader only.
+     */
+    std::vector<int> const & get_element_ids(bool boundary_domain);
 
     /**
 	 * Find data header for time and field given by header_query.
 	 */
     virtual MeshDataHeader & find_header(HeaderQuery &header_query)=0;
-
-    /**
-     * Scale and check data stored in ElementDataCache of given field.
-     */
-    CheckResult scale_and_check_limits(string field_name, double coef, double default_val,
-    		double lower_bound = -std::numeric_limits<double>::max(), double upper_bound = std::numeric_limits<double>::max());
 
 
 protected:
@@ -211,6 +218,7 @@ protected:
 
 	/// Constructor
 	BaseMeshReader(const FilePath &file_name, std::shared_ptr<ElementDataFieldMap> element_data_values);
+
 
 	/**
      * private method for reading of nodes
@@ -230,8 +238,7 @@ protected:
     /**
      * Read element data to data cache
      */
-    virtual void read_element_data(ElementDataCacheBase &data_cache, MeshDataHeader actual_header, unsigned int n_components,
-    		bool boundary_domain)=0;
+    virtual void read_element_data(ElementDataCacheBase &data_cache, MeshDataHeader header)=0;
 
     /**
      * Flag stores that check of compatible mesh was performed.
@@ -251,17 +258,8 @@ protected:
 
     /// Vector of both bulk and boundary IDs. Bulk elements come first, then boundary elements, but only the portion that appears
     /// in input mesh file and has ID assigned.
+    /// If set through set_element_ids, the GMSH reader only reads given IDs and check that all IDs are read.
     vector<LongIdx> bulk_elements_id_, boundary_elements_id_;
-
-    /// Header of actual loaded data.
-    MeshDataHeader actual_header_;
-
-    /** True if the reader can create cache with multiple components (multifield-wise).
-     * GMSH reader - true
-     * VTK reader - false
-     * TODO: find better solution to determine correct component_idx in get_element_data() - GMSH x VTK
-     */
-    bool can_have_components_;
 
     friend class ReaderCache;
 };

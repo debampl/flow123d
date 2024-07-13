@@ -223,6 +223,11 @@ public:
      */
     virtual std::shared_ptr< ElementDataCacheBase > compute_node_data(std::vector<unsigned int> &conn_vec, unsigned int data_size)=0;
 
+    /// Returns start position of boundary data in cache.
+    unsigned int get_boundary_begin() const {
+        return boundary_begin_;
+    }
+
 protected:
     template <class T>
     void set_vtk_type() {
@@ -233,7 +238,7 @@ protected:
     	} else if ( std::is_same<T, int>::value ) {
     		vtk_type_ = VTK_INT32;
     	} else {
-    		ASSERT(false).error("Unsupported VTK type");
+    		ASSERT_PERMANENT(false).error("Unsupported VTK type");
     	}
     }
 
@@ -277,6 +282,9 @@ protected:
 
     /// Is true for DummyElementDataCache
     bool is_dummy_;
+
+    /// Start position of boundary data in cache.
+    unsigned int boundary_begin_;
 };
 
 
@@ -313,7 +321,7 @@ public:
 
     void print_binary_all(ostream &, bool, unsigned int) override
     {
-        ASSERT(false).error("Not implemented.");
+        ASSERT_PERMANENT(false).error("Not implemented.");
     }
 
     void print_yaml_subarray(ostream &, unsigned int, unsigned int , unsigned int) override

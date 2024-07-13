@@ -1,11 +1,11 @@
 description: Output mesh test 3d, Darcy flow- adaptive refinement, transport - uniform refinement.
 mesh:
   mesh_file: ../00_mesh/cube_1x1x1_frac21.msh
-flow_equation: !Flow_Darcy_MH
+flow_equation: !Flow_Darcy_LMH
   input_fields:
     - region: ALL
       water_source_density: !FieldFormula
-        value: if(((x-0.5)^2+(y-0.5)^2+z^2)^0.5 > 0.01, log(((x-0.5)^2+(y-0.5)^2+z^2)^0.5), log(0.01))
+        value: ' ((log(((X[0]-0.5)^2+(X[1]-0.5)^2+X[2]^2)^0.5)) if (((X[0]-0.5)^2+(X[1]-0.5)^2+X[2]^2)^0.5 > 0.01) else (log(0.01))) '
     - region: .BOUNDARY
       bc_type: dirichlet
       bc_pressure: !FieldFormula
@@ -13,7 +13,6 @@ flow_equation: !Flow_Darcy_MH
   nonlinear_solver:
     linear_solver: !Petsc
       a_tol: 1.0e-07
-  n_schurs: 2
   output:
     fields:
       - water_source_density

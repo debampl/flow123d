@@ -3,9 +3,9 @@
 # Author: Jan Brezina
 # Source for reference: qualitative
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
-  description: Output of observe fields, setting of observe points in different ways.  
+  description: Output of observe fields, setting of observe points in different ways.
   mesh:
     mesh_file: ../00_mesh/square_1x1_frac_fork.msh
   # mesh
@@ -18,7 +18,7 @@ problem: !Coupling_Sequential
           - 1d_left_branch
     global_snap_radius: 0.1
 
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         a_tol: 1.0e-12
@@ -33,7 +33,7 @@ problem: !Coupling_Sequential
       - region: .BOUNDARY
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x+y
+          value: X[0]+X[1]
     output:
       fields:
         - {field: pressure_p0, times: [20000, 100000]}

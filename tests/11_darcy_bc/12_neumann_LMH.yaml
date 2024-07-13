@@ -14,7 +14,7 @@
 #       y=1:    -(-K*(2x-1,2y)).(0,1) = 2K
 #   checked in Paraview
 
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Steady flow with Dirichlet/Neumann/Newton boundary condition
   mesh:
@@ -56,7 +56,7 @@ problem: !Coupling_Sequential
       - region: .left_x
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: 0.25+y*y
+          value: 0.25+X[1]*X[1]
     output:
       fields:
         - piezo_head_p0

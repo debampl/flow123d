@@ -149,7 +149,7 @@ public:
 		//test_insec_points();
 
         //Profiler::instance()->output(MPI_COMM_WORLD, cout);
-		Profiler::instance()->output();
+		Profiler::instance()->output(std::cout);
 
 		bt->test_tree_params();
 		//bt->BIH_output();
@@ -182,7 +182,7 @@ public:
 			//cout << endl << "bih search: " << endl;
 			//for(unsigned int i_el : result_vec) cout << " " << this->mesh->element_accessor(i_el).idx();
 
-			ASSERT_EQ(bf_result.size(), result_vec.size());
+			ASSERT_PERMANENT_EQ(bf_result.size(), result_vec.size());
 			for(unsigned int j=0; j< bf_result.size(); j++) {
 				EXPECT_EQ(bf_result[j], result_vec[j]);
 			}
@@ -214,7 +214,7 @@ public:
 			//cout << endl << "bih search: " << endl;
 			//for(unsigned int i_el : result_point_vec) cout << " " << this->mesh->element_accessor(i_el).idx();
 
-			ASSERT_EQ(bf_point_result.size(), result_point_vec.size());
+			ASSERT_PERMANENT_EQ(bf_point_result.size(), result_point_vec.size());
 			for(unsigned int j=0; j< bf_point_result.size(); j++) {
 				EXPECT_EQ(bf_point_result[j], result_point_vec[j]);
 			}
@@ -306,6 +306,7 @@ TEST(BIH_Tree_Test, 2d_mesh) {
 	}
 
 	delete mesh;
+    Profiler::uninitialize();
 }
 
 
@@ -353,5 +354,6 @@ TEST(BIH_Tree_Test, bih_tree_above_region) {
 	}
 
 	delete mesh;
+    Profiler::uninitialize();
 }
 

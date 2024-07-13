@@ -41,7 +41,7 @@
 #### Setting the model and physical parameters
 ##In this example we use the Darcy flow model, which is set by:
 ##
-##      flow_equation: !Flow_Darcy_MH
+##      flow_equation: !Flow_Darcy_LMH
 ##
 ##*Note:
 ##The equation name consists of three parts: physical process (Flow), mathematical model (Darcy) and numerical method (MH = mixed hybrid finite element method).*
@@ -118,12 +118,12 @@
 ##Control file ```02_column_transport.yaml``` contains modified boundary conditions and solute transport model for the same physical problem.
 ##
 ##
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Example 1 of real locality - column 1D model
   mesh:
     mesh_file: 01_mesh.msh
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     input_fields:
       - region: rock
         conductivity: 1e-8

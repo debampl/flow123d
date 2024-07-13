@@ -21,6 +21,7 @@
 #include "fem/mapping_p1.hh"
 #include "quadrature/quadrature.hh"
 #include "fem/element_values.hh"
+#include "fem/fem_tools.hh"
 
 
 
@@ -96,14 +97,18 @@ void ElementData<spacedim>::print()
 template<unsigned int spacedim>
 RefElementData *ElementValues<spacedim>::init_ref_data(const Quadrature &q)
 {
-    ASSERT_DBG( q.dim() == dim_ );
-    ASSERT_DBG( q.size() == n_points_ );
+    ASSERT( q.dim() == dim_ );
+    ASSERT( q.size() == n_points_ );
     RefElementData *ref_data = new RefElementData(q.size());
 
     for (unsigned int i=0; i<q.size(); i++)
     {
         switch (q.dim())
         {
+        	case 0:
+                ref_data->bar_coords[i] = arma::vec( "0" );
+                //ref_data->bar_coords[i] = RefElement<0>::local_to_bary(q.point<0>(i));
+                break;
             case 1:
                 ref_data->bar_coords[i] = RefElement<1>::local_to_bary(q.point<1>(i));
                 break;
@@ -114,7 +119,7 @@ RefElementData *ElementValues<spacedim>::init_ref_data(const Quadrature &q)
                 ref_data->bar_coords[i] = RefElement<3>::local_to_bary(q.point<3>(i));
                 break;
         default:
-            ASSERT(false)(q.dim()).error("Unsupported dimension.\n");
+            ASSERT_PERMANENT(false)(q.dim()).error("Unsupported dimension.\n");
             break;
         }
         ref_data->weights[i] = q.weight(i);
@@ -143,7 +148,7 @@ UpdateFlags ElementValues<spacedim>::update_each(UpdateFlags flags)
             flags = MappingP1<3,spacedim>::update_each(flags);
             break;
         default:
-            ASSERT(false)(dim_).error("Unsupported dimension.\n");
+            ASSERT_PERMANENT(false)(dim_).error("Unsupported dimension.\n");
             break;
     }
     return flags;
@@ -163,7 +168,7 @@ ElementValues<spacedim>::ElementValues(
   side_ref_data(n_sides_),
   data(n_points_, update_each(_flags), dim)
 {
-    if (dim == 0) return; // avoid unnecessary allocation of dummy 0 dimensional objects
+    //if (dim == 0) return; // avoid unnecessary allocation of dummy 0 dimensional objects
     if ( _quadrature.dim() == dim )
     {
         // precompute element data
@@ -188,7 +193,7 @@ ElementValues<spacedim>::ElementValues(
                         side_quad = _quadrature.make_from_side<3>(sid);
                         break;
                     default:
-                        ASSERT(false)(dim).error("Unsupported dimension.\n");
+                        ASSERT_PERMANENT(false)(dim).error("Unsupported dimension.\n");
                         break;
                 }
                 side_ref_data[sid] = init_ref_data(side_quad);
@@ -210,12 +215,16 @@ ElementValues<spacedim>::~ElementValues()
 template<unsigned int spacedim>
 void ElementValues<spacedim>::reinit(const ElementAccessor<spacedim> & cell)
 {
-	OLD_ASSERT_EQUAL( dim_, cell.dim() );
+	ASSERT_EQ( dim_, cell.dim() );
     data.cell = cell;
 
     // calculate Jacobian of mapping, JxW, inverse Jacobian
     switch (dim_)
     {
+    	case 0:
+    		if (cell.is_valid() && data.update_flags & update_quadrature_points)
+    		    data.points.set(0) = Armor::vec<spacedim>( MappingP1<0, spacedim>::element_map(cell) );
+    		break;
         case 1:
             fill_data<1>();
             break;
@@ -226,7 +235,7 @@ void ElementValues<spacedim>::reinit(const ElementAccessor<spacedim> & cell)
             fill_data<3>();
             break;
         default:
-            ASSERT(false)(dim_).error("Unsupported dimension.\n");
+            ASSERT_PERMANENT(false)(dim_).error("Unsupported dimension.\n");
             break;
     }
 }
@@ -235,7 +244,7 @@ void ElementValues<spacedim>::reinit(const ElementAccessor<spacedim> & cell)
 template<unsigned int spacedim>
 void ElementValues<spacedim>::reinit(const Side & cell_side)
 {
-    ASSERT_EQ_DBG( dim_, cell_side.dim() );
+    ASSERT_EQ( dim_, cell_side.dim()+1 );
     data.side = cell_side;
     
     // calculate Jacobian of mapping, JxW, inverse Jacobian, normal vector(s)
@@ -254,7 +263,7 @@ void ElementValues<spacedim>::reinit(const Side & cell_side)
             fill_side_data<3>();
             break;
         default:
-            ASSERT(false)(dim_).error("Unsupported dimension.\n");
+            ASSERT_PERMANENT(false)(dim_).error("Unsupported dimension.\n");
             break;
     }
 }
@@ -297,7 +306,7 @@ void ElementValues<spacedim>::fill_data()
         if ((data.update_flags & update_volume_elements) |
             (data.update_flags & update_JxW_values))
         {
-            double det = fabs(::determinant(jac));
+            double det = fabs(fe_tools::determinant(jac));
 
             // update determinants
             if (data.update_flags & update_volume_elements)
@@ -314,14 +323,15 @@ void ElementValues<spacedim>::fill_data()
         if (data.update_flags & update_inverse_jacobians)
         {
             arma::mat::fixed<dim,spacedim> ijac;
-            if (dim==spacedim)
-            {
-                ijac = inv(jac);
-            }
-            else
-            {
-                ijac = pinv(jac);
-            }
+            ijac = fe_tools::inverse(jac);
+//            if (dim==spacedim)
+//            {
+//                ijac = inv(jac);
+//            }
+//            else
+//            {
+//                ijac = pinv(jac);
+//            }
             for (unsigned int i=0; i<n_points_; i++)
                 data.inverse_jacobians.set(i) = Armor::mat<dim,spacedim>( ijac );
         }
@@ -380,7 +390,7 @@ void ElementValues<spacedim>::fill_side_data()
             side_jac = MappingP1<MatrixSizes<dim>::dim_minus_one,spacedim>::jacobian(side_coords);
 
             // calculation of JxW
-            side_det = fabs(::determinant(side_jac));
+            side_det = fabs(fe_tools::determinant(side_jac));
         }
         for (unsigned int i=0; i<n_points_; i++)
             data.side_JxW_values[i] = side_det*side_ref_data[side_idx]->weights[i];

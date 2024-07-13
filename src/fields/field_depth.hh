@@ -40,14 +40,14 @@ public:
       : value_cache_( FieldValueCache<double>(1, 1) ), surface_depth_(nullptr)
     {
         this->multifield_ = false;
-    	unsigned int cache_size = 1.1 * CacheMapElementNumber::get();
+    	unsigned int cache_size = CacheMapElementNumber::get();
     	value_cache_.reinit(cache_size);
     	value_cache_.resize(cache_size);
     	this->set_shape(1, 1);
     }
 
     IT::Instance get_input_type() override {
-        ASSERT(false).error("This method can't be used for FieldDepth");
+        ASSERT_PERMANENT(false).error("This method can't be used for FieldDepth");
 
         IT::Abstract abstract = IT::Abstract();
         IT::Instance inst = IT::Instance( abstract, std::vector<IT::TypeBase::ParameterPair>() );
@@ -55,14 +55,14 @@ public:
     }
 
     IT::Array get_multifield_input_type() override {
-        ASSERT(false).error("This method can't be used for FieldDepth");
+        ASSERT_PERMANENT(false).error("This method can't be used for FieldDepth");
 
         IT::Array arr = IT::Array( IT::Integer() );
         return arr;
     }
 
     void set_mesh(const Mesh &mesh) override {
-        this->mesh_ = &mesh;
+        shared_->mesh_ = &mesh;
     }
 
     bool is_constant(FMT_UNUSED Region reg) override {
@@ -74,15 +74,11 @@ public:
     }
 
     void copy_from(FMT_UNUSED const FieldCommon & other) override {
-        ASSERT(false).error("Forbidden method for FieldCoords!");
+        ASSERT_PERMANENT(false).error("Forbidden method for FieldCoords!");
     }
 
-    void field_output(FMT_UNUSED std::shared_ptr<OutputTime> stream, FMT_UNUSED OutputTime::DiscreteSpaceFlags type) override {
-        ASSERT(false).error("Forbidden method for FieldCoords!");
-    }
-
-    void observe_output(FMT_UNUSED std::shared_ptr<Observe> observe) override {
-        ASSERT(false).error("Forbidden method for FieldCoords!");
+    void field_output(FMT_UNUSED std::shared_ptr<OutputTime> stream, FMT_UNUSED OutputTime::DiscreteSpace type) override {
+        ASSERT_PERMANENT(false).error("Forbidden method for FieldCoords!");
     }
 
     FieldResult field_result(FMT_UNUSED RegionSet region_set) const override {
@@ -128,7 +124,7 @@ public:
     }
 
     /// Implements FieldCommon::set_dependency().
-    std::vector<const FieldCommon *> set_dependency(FMT_UNUSED FieldSet &field_set, FMT_UNUSED unsigned int i_reg) const override {
+    std::vector<const FieldCommon *> set_dependency(FMT_UNUSED unsigned int i_reg) const override {
     	std::vector<const FieldCommon *> res;
     	res.push_back(field_coords_);
         return res;
@@ -155,7 +151,6 @@ private:
     /// Surface depth object calculate distance from surface.
     std::shared_ptr<SurfaceDepth> surface_depth_;
 
-    const Mesh *mesh_;                  ///< Pointer to the mesh.
     FieldCoords * field_coords_;        ///< Pointer to coordinates field.
 };
 

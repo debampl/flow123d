@@ -189,7 +189,7 @@ void ObservePoint::snap(Mesh &mesh)
         	ph.snap_to_subelement(observe_data_, elm, snap_dim_);
             break;
         }
-        default: ASSERT(false).error("Clipping supported only for dim=1,2,3.");
+        default: ASSERT_PERMANENT(false).error("Clipping supported only for dim=1,2,3.");
     }
 }
 
@@ -321,7 +321,7 @@ ObservePointData ObservePoint::point_projection(unsigned int i_elm, ElementAcces
 		break;
 	}
 	default:
-		ASSERT(false).error("Invalid element dimension!");
+		ASSERT_PERMANENT(false).error("Invalid element dimension!");
 	}
 
 	return ObservePointData(); // Should not happen.
@@ -384,20 +384,21 @@ Observe::Observe(string observe_name, Mesh &mesh, Input::Array in_array,
         } INPUT_CATCH(FilePath::ExcFileOpen, FilePath::EI_Address_String, in_array)
         output_header();
     }
+
+    // Create vector of observe data on patch
+    for (ObservePointAccessor op_acc : this->local_range()) {
+        patch_point_data_.emplace_back(op_acc.observe_point().element_idx(), op_acc.observe_point().local_coords());
+    }
 }
 
 Observe::~Observe() {
-    if (points_.size()>0 && observe_field_values_.size()>0)
-        flush_values();
-
+    flush_values();
     observe_file_.close();
     if (point_ds_!=nullptr) delete point_ds_;
 }
 
 
-template <typename T>
-ElementDataCache<T> & Observe::prepare_compute_data(std::string field_name, double field_time, unsigned int n_rows,
-		unsigned int n_cols)
+Observe::OutputDataPtr Observe::prepare_compute_data(std::string field_name, double field_time, unsigned int n_shape)
 {
     double time_unit_seconds = time_unit_conversion_->get_coef();
     if ( std::isnan(observe_values_time_[observe_time_idx_]) )
@@ -409,20 +410,11 @@ ElementDataCache<T> & Observe::prepare_compute_data(std::string field_name, doub
     OutputDataFieldMap::iterator it=observe_field_values_.find(field_name);
     if (it == observe_field_values_.end()) {
         observe_field_values_[field_name]
-					= std::make_shared< ElementDataCache<T> >(field_name, n_rows * n_cols, point_ds_->lsize());
+					= std::make_shared< ElementDataCache<double> >(field_name, n_shape, point_ds_->lsize());
         it=observe_field_values_.find(field_name);
     }
-    return dynamic_cast<ElementDataCache<T> &>(*(it->second));
+    return it->second;
 }
-
-// explicit instantiation of template method
-#define OBSERVE_PREPARE_COMPUTE_DATA(TYPE) \
-template ElementDataCache<TYPE> & Observe::prepare_compute_data<TYPE>(std::string field_name, double field_time, \
-		unsigned int n_rows, unsigned int n_cols)
-
-OBSERVE_PREPARE_COMPUTE_DATA(int);
-OBSERVE_PREPARE_COMPUTE_DATA(unsigned int);
-OBSERVE_PREPARE_COMPUTE_DATA(double);
 
 
 void Observe::output_header() {
@@ -438,27 +430,29 @@ void Observe::output_header() {
 }
 
 void Observe::flush_values() {
-    std::vector<LongIdx> local_to_global(Observe::max_observe_value_time*point_4_loc_.size());
-    for (unsigned int i=0; i<Observe::max_observe_value_time; ++i)
-        for (unsigned int j=0; j<point_4_loc_.size(); ++j) local_to_global[i*point_4_loc_.size()+j] = i*points_.size()+point_4_loc_[j];
+    if (points_.size() == 0 || observe_field_values_.size() == 0) return;
 
-    for(auto &field_data : observe_field_values_) {
-        auto serial_data = field_data.second->gather(point_ds_, &(local_to_global[0]));
-        if (rank_==0) field_data.second = serial_data;
-    }
+	std::vector<LongIdx> local_to_global(Observe::max_observe_value_time*point_4_loc_.size());
+	for (unsigned int i=0; i<Observe::max_observe_value_time; ++i)
+		for (unsigned int j=0; j<point_4_loc_.size(); ++j) local_to_global[i*point_4_loc_.size()+j] = i*points_.size()+point_4_loc_[j];
 
-    if (rank_ == 0) {
-        unsigned int indent = 2;
-        DebugOut() << "Observe::output_time_frame WRITE\n";
-        for (unsigned int i_time=0; i_time<observe_time_idx_; ++i_time) {
-            observe_file_ << setw(indent) << "" << "- time: " << observe_values_time_[i_time] << endl;
-            for(auto &field_data : observe_field_values_) {
-                observe_file_ << setw(indent) << "" << "  " << field_data.second->field_input_name() << ": ";
-                field_data.second->print_yaml_subarray(observe_file_, precision_, i_time*points_.size(), (i_time+1)*points_.size());
-                observe_file_ << endl;
-            }
-        }
-    }
+	for(auto &field_data : observe_field_values_) {
+		auto serial_data = field_data.second->gather(point_ds_, &(local_to_global[0]));
+		if (rank_==0) field_data.second = serial_data;
+	}
+
+	if (rank_ == 0) {
+		unsigned int indent = 2;
+		DebugOut() << "Observe::output_time_frame WRITE\n";
+		for (unsigned int i_time=0; i_time<observe_time_idx_; ++i_time) {
+			observe_file_ << setw(indent) << "" << "- time: " << observe_values_time_[i_time] << endl;
+			for(auto &field_data : observe_field_values_) {
+				observe_file_ << setw(indent) << "" << "  " << field_data.second->field_input_name() << ": ";
+				field_data.second->print_yaml_subarray(observe_file_, precision_, i_time*points_.size(), (i_time+1)*points_.size());
+				observe_file_ << endl;
+			}
+		}
+	}
 
     observe_values_time_.clear();
     observe_values_time_.reserve(max_observe_value_time);
@@ -467,8 +461,6 @@ void Observe::flush_values() {
 }
 
 void Observe::output_time_frame(bool flush) {
-    if (points_.size() == 0) return;
-    
     if ( ! no_fields_warning ) {
         no_fields_warning=true;
         // check that observe fields are set

@@ -1,4 +1,4 @@
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Test1 - Steady flow with multidimensional connections 1D-2D-3D
   mesh:
@@ -45,7 +45,7 @@ problem: !Coupling_Sequential
       - region: dirichlet_boundary
         bc_type: dirichlet
         bc_pressure: !FieldFormula
-          value: x-z
+          value: X[0]-X[2]
     output:
       fields:
         - piezo_head_p0

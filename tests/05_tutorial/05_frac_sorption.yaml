@@ -38,7 +38,7 @@
 ##![Results of sorption.](tutor_figures/05_mass_flux.pdf){#fig:sorp_res}
 ##
 ##
-flow123d_version: 3.1.0
+flow123d_version: 4.0.0a01
 problem: !Coupling_Sequential
   description: Example 5 - Fractures - sorption
   mesh:
@@ -64,7 +64,7 @@ problem: !Coupling_Sequential
         regions:
           - .left
           - .left_points
-  flow_equation: !Flow_Darcy_MH
+  flow_equation: !Flow_Darcy_LMH
     nonlinear_solver:
       linear_solver: !Petsc
         options: -ksp_type preonly  -pc_type cholesky
@@ -107,7 +107,7 @@ problem: !Coupling_Sequential
           porosity: 0.1
         - region: .left_points
           bc_conc: !FieldFormula
-            value: 2.84959e-5*exp(-0.5*((t-2000)/700)^2)
+            value: 2.84959e-5*exp(-0.5*((t-2000)/700)**2)
     substances:
       - I
       - Ra-lin

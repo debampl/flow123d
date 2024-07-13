@@ -36,8 +36,9 @@
 #include "input/type_record.hh"                        // for Record
 #include "input/type_selection.hh"                     // for Selection
 #include "io/output_time.hh"                           // for OutputTime
+#include "io/output_time_set.hh"                       // for OutputTimeSet
 #include "mesh/region.hh"                              // for Region (ptr only)
-#include "system/asserts.hh"                           // for Assert, ASSERT
+#include "system/asserts.hh"                           // for Assert, ASSERT_PERMANENT
 #include "system/exc_common.hh"                        // for EI_Message
 #include "system/exceptions.hh"                        // for operator<<
 #include "system/flag_array.hh"                        // for FlagArray<>::Mask
@@ -48,6 +49,8 @@ class Observe;
 class EvalPoints;
 class ElementCacheMap;
 class FieldSet;
+class BulkPoint;
+class ElementDataCacheBase;
 
 
 using namespace std;
@@ -155,7 +158,7 @@ public:
      */
     FieldCommon & set_limits(double min, double max = std::numeric_limits<double>::max())
     {
-    	ASSERT(min < max)(min)(max).error("Invalid field limits!");
+    	ASSERT_PERMANENT_LT(min, max).error("Invalid field limits!");
     	shared_->limits_ = std::make_pair(min, max);
     	return *this;
     }
@@ -263,11 +266,20 @@ public:
     OutputTime::DiscreteSpace get_output_type() const
     { return default_output_data_; }
 
-    bool is_bc() const
-    { return shared_->bc_;}
-
     unsigned int n_comp() const
     { return shared_->comp_names_.size();}
+
+    /**
+     * Returns full name of subfield on \p i_comp position created from component name and field name.
+     *
+     * If component name is empty returns only field name.
+     */
+    inline std::string full_comp_name(unsigned int i_comp) const
+    {
+        ASSERT_LT(i_comp, shared_->comp_names_.size());
+        return shared_->comp_names_[i_comp].empty() ? this->name()
+                : shared_->comp_names_[i_comp] + "_" + this->name();
+    }
 
     const Mesh * mesh() const
     { return shared_->mesh_;}
@@ -349,7 +361,8 @@ public:
     bool changed() const
     {
     	ASSERT( set_time_result_ != TimeStatus::unknown ).error("Invalid time status.");
-        return ( (set_time_result_ == TimeStatus::changed) );
+        return ( (set_time_result_ == TimeStatus::changed) ||
+                 (set_time_result_ == TimeStatus::changed_forced) );
     }
 
     /**
@@ -423,19 +436,12 @@ public:
      * The parameter @p output_fields is checked for value named by the field name. If the key exists,
      * then the output of the field is performed. If the key do not appear in the input, no output is done.
      */
-    virtual void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpaceFlags type) =0;
-
-    /**
-     * Perform the observe output of the field.
-     * The Observe object passed by the parameter is called with the particular Field<> as the parameter
-     * to evaluate the field in observation points and store the values in the OutputData arrays.
-     */
-    virtual void observe_output(std::shared_ptr<Observe> observe) =0;
+    virtual void field_output(std::shared_ptr<OutputTime> stream, OutputTime::DiscreteSpace type) =0;
 
     /**
      * Set reference of FieldSet to all instances of FieldFormula.
      */
-    virtual std::vector<const FieldCommon *> set_dependency(FieldSet &field_set, unsigned int i_reg) const =0;
+    virtual std::vector<const FieldCommon *> set_dependency(unsigned int i_reg) const =0;
 
     /**
      * Sets @p component_index_
@@ -484,6 +490,25 @@ public:
      */
     virtual const FieldValueCache<double> * value_cache() const =0;
 
+    /// Create and set shared_ptr to ElementDataCache. Used only in descendant Field<>.
+    virtual void set_output_data_cache(FMT_UNUSED OutputTime::DiscreteSpace space_type, FMT_UNUSED std::shared_ptr<OutputTime> stream)
+    {
+        ASSERT_PERMANENT(false);
+    }
+
+    /// Fill data to ElementDataCache on given patch.
+    virtual void fill_data_value(FMT_UNUSED const std::vector<int> &offsets)
+    {
+        ASSERT_PERMANENT(false);
+    }
+
+
+    /// Fill data to ElementDataCache on given patch.
+    virtual void fill_observe_value(FMT_UNUSED std::shared_ptr<ElementDataCacheBase> output_cache_base, FMT_UNUSED const std::vector<int> &offsets)
+    {
+        ASSERT_PERMANENT(false);
+    }
+
 
     /**
      * Print stored messages to table.
@@ -493,9 +518,25 @@ public:
     static bool print_message_table(ostream& stream, std::string equation_name);
 
     /**
+     * Setter of @p shared_->default_fieldset_
+     *
+     * Sets FieldSet which is default owner of Field. This FieldSet is used during evaluation
+     * of user field in FieldFormula.
+     */
+    inline void set_default_fieldset(FieldSet &default_fs) {
+        shared_->default_fieldset_ = &default_fs;
+    }
+
+    /**
      * Virtual destructor.
      */
     virtual ~FieldCommon();
+
+    /// Return number of shape components
+    inline uint n_shape() const {
+        if (shape_.size() == 1) return shape_[0];
+        else return shape_[0] * shape_[1];
+    }
 
     /**
      * Hold shape of Field.
@@ -548,10 +589,6 @@ protected:
     	SharedData()
     	: list_idx_(0), limits_(std::make_pair(-std::numeric_limits<double>::max(), std::numeric_limits<double>::max())) {};
 
-        /**
-         * True for boundary fields.
-         */
-        bool bc_;
         /**
          * Number of components for fields that return variable size vectors. Zero in other cases.
          */
@@ -615,6 +652,14 @@ protected:
          */
         std::pair<double, double> limits_;
 
+        /**
+         * Holds FieldSet which is default owner of Field.
+         *
+         * This data member is set in method FieldSet::make_field_descriptor_type and it is used during evaluation
+         * of user field in FieldFormula.
+         */
+        FieldSet *default_fieldset_;
+
 
     };
 
@@ -635,6 +680,7 @@ protected:
     enum class TimeStatus {
         changed,    //<  Field changed during last set time call.
         constant,   //<  Field doesn't change.
+        changed_forced, //< Field changed manually (reset during set_time() to changed).
         unknown     //<  Before first call of set_time.
     };
 
@@ -704,7 +750,7 @@ public:
     
     /// Manually mark flag that the field has been changed.
     void set_time_result_changed()
-    { set_time_result_ = TimeStatus::changed; }
+    { set_time_result_ = TimeStatus::changed_forced; }
 };
 
 
